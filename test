@@ -1,0 +1,36 @@
+#!/bin/bash
+set -e
+
+if [[ -z "$DEVICE" ]]; then
+    DEVICE=xczu7ev
+fi
+
+if [[ "$DEBUG_MODE" = 1 ]]; then
+    DEVICE_PATH="${FPGA_INTERCHANGE_TESTS_PATH}/build/devices/${DEVICE}/${DEVICE}.device.raw"
+else
+    DEVICE_PATH="${FPGA_INTERCHANGE_TESTS_PATH}/build/devices/${DEVICE}/${DEVICE}.device"
+fi
+
+BBA=test_out/${DEVICE}_extra.bba
+
+EXTRA_OPTS=""
+BIN_PATH=""
+
+export FPGA_INTERCHANGE_SCHEMA_DIR="${FPGA_INTERCHANGE_TESTS_PATH}/third_party/fpga-interchange-schema"
+if [[ "$DEBUG_MODE" = 1 ]]; then
+    cargo build
+    EXTRA_OPTS="${EXTRA_OPTS} --raw"
+    BIN_PATH="./target/debug/nisp"
+else
+    cargo build --release
+    BIN_PATH="./target/release/nisp"
+fi
+
+if [[ -n "$TILE_TYPES" ]]; then
+    EXTRA_OPTS="${EXTRA_OPTS} --tile-types ${TILE_TYPES}"
+fi
+
+echo "Running \`./target/release/nisp $DEVICE_PATH $BBA $EXTRA_OPTS\`"
+echo ""
+export RUST_BACKTRACE=1
+$BIN_PATH $DEVICE_PATH $BBA $EXTRA_OPTS
