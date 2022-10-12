@@ -4,7 +4,7 @@ use std::path::Path;
 #[macro_use]
 pub mod include_path;
 pub mod ic_loader;
-pub mod routing_graph;
+pub mod logic_formula;
 pub mod site_brute_router;
 
 use crate::ic_loader::OpenOpts;
@@ -19,7 +19,6 @@ use crate::site_brute_router::BruteRouter;
 )]
 struct Args {
     device: String,
-    //netlist: String,
     bba: String,
     #[clap(long)]
     raw: bool,
@@ -51,8 +50,6 @@ impl<'a> Inputs<'a> {
         Self {
             device: archdef.get_archdef_root()
                 .expect("Device file does not contain a valid root structure"),
-            /* netlist: lnet.get_logical_netlist_root()
-                .expect("Logical netlist file does not contain a valid root structure") */
         }
     }
 }
@@ -64,11 +61,6 @@ fn main() {
         Path::new(&args.device), 
         OpenOpts { raw: args.raw }
     ).expect("Couldn't open device file");
-
-    /* let lnet_msg = ic_loader::open(
-        Path::new(&args.netlist), 
-        OpenOpts { raw: args.raw }
-    ).expect("Couldn't open logical netlist file"); */
     
     let inputs = Inputs::new(&archdef_msg/* , &lnet_msg */);
 
@@ -89,6 +81,6 @@ fn main() {
         .collect();
     
     for tt in tile_types {
-        let router = BruteRouter::new(&inputs, &tt);
+        let _ = BruteRouter::new(&inputs, &tt);
     }
 }
