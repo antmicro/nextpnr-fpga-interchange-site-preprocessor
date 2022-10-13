@@ -40,11 +40,11 @@ impl std::fmt::Debug for TestVar {
     }
 }
 
+use FormulaTerm::*;
+use TestVar::*;
+
 #[test]
 fn test_variable_comparison() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
     assert!(False < Var(A));
     assert!(Var(A) < NegVar(A));
     assert!(NegVar(A) < Var(B));
@@ -53,9 +53,6 @@ fn test_variable_comparison() {
 
 #[test]
 fn test_variable_sorting() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
     let mut cube = DNFCube::new();
 
     cube.add_term(Var(C));
@@ -72,51 +69,36 @@ fn test_variable_sorting() {
 
 #[test]
 fn test_reduction_of_two_same_cubes() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
     let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![Var(X)] });
+        .add_cube(DNFCube { terms: vec![Var(X)] });
     
-        
-    /* f2(X) = x */
     let form2 = form1.clone();
 
     let expected = form1.clone();
 
-    let result = form1.merge(form2);
+    let result = form1.conjunct(form2);
     assert_eq!(result, expected);
 }
 
 #[test]
 fn test_reduction_of_two_different_cubes() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
     let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X)] });
-
-    /* f2(X) = x */
+        .add_cube(DNFCube { terms: vec![NegVar(X)] });
+    
     let form2 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![Var(X)] });
+        .add_cube(DNFCube { terms: vec![Var(X)] });
 
-    let result = form1.merge(form2);
-    let expected = DNFForm::new().merge_cube(DNFCube { terms: vec![] });
+    let result = form1.conjunct(form2);
+    let expected = DNFForm::new().add_cube(DNFCube { terms: vec![] });
 
     assert_eq!(result, expected);
 }
 
 #[test]
 fn test_cube_failed_merging_simple() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
     let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X)] })
-        .merge_cube(DNFCube { terms: vec![NegVar(Y), NegVar(Z)] });
+        .add_cube(DNFCube { terms: vec![NegVar(X)] })
+        .add_cube(DNFCube { terms: vec![NegVar(Y), NegVar(Z)] });
 
     let mut expected = DNFForm::new();
     expected.cubes.push(DNFCube { terms: vec![NegVar(X)] });
@@ -127,13 +109,9 @@ fn test_cube_failed_merging_simple() {
 
 #[test]
 fn test_reduction_of_complementaries_left() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
     let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] })
-        .merge_cube(DNFCube { terms: vec![Var(X), NegVar(Y)] });
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] })
+        .add_cube(DNFCube { terms: vec![Var(X), NegVar(Y)] });
 
     let mut expected = DNFForm::new();
     expected.cubes.push(DNFCube { terms: vec![NegVar(Y)] });
@@ -143,13 +121,9 @@ fn test_reduction_of_complementaries_left() {
 
 #[test]
 fn test_reduction_of_complementaries_right() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
     let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![Var(X), NegVar(Y)] })
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] });
+        .add_cube(DNFCube { terms: vec![Var(X), NegVar(Y)] })
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] });
 
     let mut expected = DNFForm::new();
     expected.cubes.push(DNFCube { terms: vec![NegVar(Y)] });
@@ -159,13 +133,9 @@ fn test_reduction_of_complementaries_right() {
 
 #[test]
 fn test_reduction_of_overspecification_left() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
     let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] })
-        .merge_cube(DNFCube { terms: vec![NegVar(Y)] });
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] })
+        .add_cube(DNFCube { terms: vec![NegVar(Y)] });
 
     let mut expected = DNFForm::new();
     expected.cubes.push(DNFCube { terms: vec![NegVar(Y)] });
@@ -175,13 +145,9 @@ fn test_reduction_of_overspecification_left() {
 
 #[test]
 fn test_reduction_of_overspecification_right() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
     let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(Y)] })
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] });
+        .add_cube(DNFCube { terms: vec![NegVar(Y)] })
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] });
 
     let mut expected = DNFForm::new();
     expected.cubes.push(DNFCube { terms: vec![NegVar(Y)] });
@@ -191,13 +157,9 @@ fn test_reduction_of_overspecification_right() {
 
 #[test]
 fn test_no_reduction_of_complementaries_left() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
     let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] })
-        .merge_cube(DNFCube { terms: vec![Var(X), Var(Y), Var(Z)] });
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] })
+        .add_cube(DNFCube { terms: vec![Var(X), Var(Y), Var(Z)] });
 
     let mut expected = DNFForm::new();
     expected.cubes.push(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
@@ -205,3 +167,92 @@ fn test_no_reduction_of_complementaries_left() {
     
     assert_eq!(form1, expected);
 }
+
+#[test]
+fn test_no_reduction_of_same() {
+    let form1 = DNFForm::new()
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] })
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
+
+    let mut expected = DNFForm::new()
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
+    
+    assert_eq!(form1, expected);
+}
+
+#[test]
+fn test_reduction_of_same_2() {
+    let form1 = DNFForm::new()
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] })
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
+
+    let mut expected = DNFForm::new()
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
+    
+    assert_eq!(form1, expected);
+}
+
+#[test]
+fn test_double_reduction_of_complementaries() {
+
+    let form1 = DNFForm::new()
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] }) /* 1 */
+        .add_cube(DNFCube { terms: vec![Var(X), Var(Y), Var(Z)] })       /* 2 */
+        .add_cube(DNFCube { terms: vec![NegVar(X), Var(Y), Var(Z)] });   /* 3 */
+
+    /* This test checks if the system is capale of re-using the same equation
+     * to perform multiple reductions over conjunction groups.
+     * 
+     * Below is the expected reasoning:
+     * 
+     *        .---G[1]----.   .--G[2]---.   .---G[3]---.
+     * f(X) = (¬x ∧ ¬y ∧ z) ∨ (x ∧ y ∧ z) ∨ (¬x ∧ y ∧ z)
+     * ------------------------------------
+     * 4. G[1] ∨ G[3] ≡ ¬x ∧ z
+     * 5. G[2] ∨ G[3] => ¬y ∧ z
+     * 
+     * ERGO:
+     *    f(X) = (¬x ∧ z) ∨ (¬y ∧ z)
+     * ------------------------------------
+     */
+
+    let mut expected = DNFForm::new();
+    expected.cubes.push(DNFCube { terms: vec![NegVar(X), Var(Z)] });
+    expected.cubes.push(DNFCube { terms: vec![Var(Y), Var(Z)] });
+    
+    assert_eq!(form1, expected);
+}
+
+#[test]
+fn test_quadruple_reduction_of_complementaries() {
+    let form1 = DNFForm::new()
+        .add_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] }) /* 1 */
+        .add_cube(DNFCube { terms: vec![Var(X), Var(Y), Var(Z)] })       /* 2 */
+        .add_cube(DNFCube { terms: vec![NegVar(X), Var(Y), Var(Z)] })    /* 3 */
+        .add_cube(DNFCube { terms: vec![Var(X), NegVar(Y), Var(Z)] });   /* 4 */
+    
+    /* This test checks if the system is capale of re-using the same equation
+     * to perform multiple reductions over conjunction groups.
+     * 
+     * Below is the expected reasoning:
+     * 
+     *        .---G[1]----.   .--G[2]---.   .---G[3]---.   .---G[4]---.
+     * f(X) = (¬x ∧ ¬y ∧ z) ∨ (x ∧ y ∧ z) ∨ (¬x ∧ y ∧ z) ∨ (x ∧ ¬y ∧ z)
+     * ------------------------------------
+     * 5. G[1] ∨ G[3] ≡ ¬x ∧ z
+     * 6. G[2] ∨ G[3] ≡ y ∧ z
+     * 7. G[1] ∨ G[4] ≡ ¬y ∧ z
+     * 8. G[2] ∨ G[4] ≡ x ∧ z
+     * 
+     * ERGO:
+     *    f(X) = z
+     * ------------------------------------
+     */
+
+
+    let mut expected = DNFForm::new();
+    expected.cubes.push(DNFCube { terms: vec![Var(Z)] });
+    
+    assert_eq!(form1, expected);
+}
+

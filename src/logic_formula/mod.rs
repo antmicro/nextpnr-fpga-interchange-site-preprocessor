@@ -176,6 +176,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
     FormulaTerm<Id>: std::fmt::Debug,
     Id: Ord + Eq + Clone,
 {
+    /* This is ridiculously complex but the goal is to do it in linear time. */
     fn try_to_reduce_disjunction(&self, other: &Self) -> Option<Self> {
         dbg_log!(DBG_EXTRA, "Reducing disjunction between {:?} and {:?}", self, other);
         /* Reduced cube in construction */
@@ -255,10 +256,10 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                         }
                     }
                 }
-                (Some(FormulaTerm::Var(x)), Some(FormulaTerm::NegVar(notx)))
-                    | (Some(FormulaTerm::NegVar(notx)), Some(FormulaTerm::Var(x))) =>
+                (Some(FormulaTerm::Var(x)), Some(FormulaTerm::NegVar(y)))
+                    | (Some(FormulaTerm::NegVar(x)), Some(FormulaTerm::Var(y))) =>
                 {
-                    match x.cmp(notx) {
+                    match x.cmp(y) {
                         /* (p ∧ ∧{x}) ∨ (¬p ∧ ∧{x}) ≡ ∧{x} */
                         Ordering::Equal => {
                             dbg_log!(DBG_EXTRA, "(p ∧ ∧{{x}}) ∨ (¬p ∧ ∧{{x}}) ≡ ∧{{x}}");
@@ -341,7 +342,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
         };
 
         if reductible {
-            dbg_log!(DBG_EXTRA, "Reduction SUCCCESS!");
+            dbg_log!(DBG_EXTRA, "Reduction SUCCCESS! Reduced form: {:?}", reduced);
             Some(reduced)
         } else {
             dbg_log!(DBG_EXTRA, "Reduction FAILURE!");
@@ -371,8 +372,8 @@ trait MergableDNFForm<Id> where
     FormulaTerm<Id>: std::fmt::Debug,
     Id: Ord + Eq
 {
-    fn merge_cube(self, cube: DNFCube<Id>) -> Self;
-    fn merge(self, other: Self) -> Self;
+    fn add_cube(self, cube: DNFCube<Id>) -> Self;
+    fn conjunct(self, other: Self) -> Self;
 }
 
 impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
@@ -380,31 +381,46 @@ impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
     FormulaTerm<Id>: std::fmt::Debug,
     Id: Ord + Eq + Clone
 {
-    fn merge_cube(mut self, cube: DNFCube<Id>) -> Self {
-        for (idx, my_cube) in self.cubes.iter_mut().enumerate() {
-            match my_cube.try_to_reduce_disjunction(&cube) {
-                Some(reduction) =>{
-                    if reduction.is_false_const() {
-                        self.cubes.remove(idx);
-                        return self;
-                    } else {
-                        /* TODO: Mybe there are multiple possibilities.
-                         * Which one is the best?
-                         */
-                        *my_cube = reduction;
-                        return self;
-                    }
-                },
-                None => ()
+    /* Complexity: O(terms * cubes) */
+    fn add_cube(mut self, cube: DNFCube<Id>) -> Self {
+        let mut reduced = false;
+        'outer: loop {
+            'inner: for (idx, my_cube) in self.cubes.iter_mut().enumerate() {
+                match my_cube.try_to_reduce_disjunction(&cube) {
+                    Some(reduction) =>{
+                        if reduction.is_false_const() {
+                            self.cubes.remove(idx);
+                            reduced = true;
+                            continue 'outer;
+                        } else {
+                            /* TODO: Mybe there are multiple possibilities.
+                             * Which one is the best?
+                             */
+                            
+                            reduced = true;
+                            if my_cube.terms != reduction.terms {
+                                *my_cube = reduction;
+                                continue 'outer;
+                            } else {
+                                continue 'inner;
+                            }
+                        }
+                    },
+                    None => break 'outer,
+                }
             }
+            break 'outer;
         }
-        self.cubes.push(cube);
+        if !reduced {
+            self.cubes.push(cube);
+        } 
         self
     }
 
-    fn merge(self, other: Self) -> Self {
+    /* Complexity: pretty bad */
+    fn conjunct(self, other: Self) -> Self {
         other.cubes.into_iter()
-            .fold(self, |me, cube| me.merge_cube(cube))
+            .fold(self, |me, cube| me.add_cube(cube))
     }
 }
 
