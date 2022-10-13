@@ -32,18 +32,18 @@ pub const LOG_LVL_STR: &'static [&'static str] = &[
 
 #[cfg(debug_assertions)]
 macro_rules! dbg_log {
-    ($lvl:expr, $fmt:literal $(, $( $v:expr )+)?) => {
+    ($lvl:expr, $fmt:literal $(, $v:expr )*) => {
         let lvl = crate::log::LOG_LVL_STR.len().min($lvl);
         if *crate::log::DBG_LOG_LEVEL >= lvl {
             if *crate::log::DBG_PRINT_CODE_INFO != 0 {
                 dbg!(
                     concat!("{}: ", $fmt),
-                    $fmt, LOG_LVL_STR[lvl] $(, $( &$v ),+)?
+                    $fmt, LOG_LVL_STR[lvl] $(, &$v )*
                 );
             } else {
                 eprintln!(
                     concat!("{}: ", $fmt),
-                    crate::log::LOG_LVL_STR[lvl] $(, $( $v ),+)?
+                    crate::log::LOG_LVL_STR[lvl] $(, &$v )*
                 );
             }
         }

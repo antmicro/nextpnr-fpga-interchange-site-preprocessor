@@ -9,6 +9,7 @@ mod intersperse;
 mod tests;
 
 use self::intersperse::*;
+use crate::log::*;
 
 enum FormulaTerm<Id> where Id: Ord + Eq {
     Var(Id),
@@ -157,7 +158,9 @@ impl<Id> DNFCube<Id> where Id: Ord + Eq {
     }
 }
 
-trait ReductibleDNFCube<Id> where Self: Sized {
+trait ReductibleDNFCube<Id> where
+    Self: Sized + std::fmt::Debug,
+{
     /* Attempts to reduce disjunction of two cubes into a single cube */
     fn try_to_reduce_disjunction(&self, other: &Self) -> Option<Self>;
 }
@@ -168,8 +171,12 @@ enum TermReductionAction {
     Ignore, /* Ignores the term in this iteration. To be checked in the next one */
 }
 
-impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where Id: Ord + Eq + Clone {
+impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
+    Self: std::fmt::Debug,
+    Id: Ord + Eq + Clone,
+{
     fn try_to_reduce_disjunction(&self, other: &Self) -> Option<Self> {
+        dbg_log!(DBG_EXTRA, "Reducing disjunction between {:?} and {:?}", self, other);
         /* Reduced cube in construction */
         let mut reduced = DNFCube::new();
 
@@ -193,26 +200,34 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where Id: Ord + Eq + Clone {
             match (my_yield, others_yield) {
                 /* (⊥ ∧ ∧{x}) ∨ ∧{y} ≡ ∧{y} */
                 (Some(FormulaTerm::False), _) => {
+                    dbg_log!(DBG_EXTRA, "(⊥ ∧ ∧{{x}}) ∨ ∧{{y}} ≡ ∧{{y}}");
                     return Some(other.clone());
                 },
                 (_, Some(FormulaTerm::False)) => {
+                    dbg_log!(DBG_EXTRA, "∧{{y}} ∨ (⊥ ∧ ∧{{x}}) ≡ ∧{{y}}");
                     return Some(self.clone());
                 }
                 /* ⊤ ∨ ⊤ ≡ ⊤ */
                 (Some(FormulaTerm::True), Some(FormulaTerm::True)) => {
+                    dbg_log!(DBG_EXTRA, "⊤ ∨ ⊤ ≡ ⊤");
                     take_other = TermReductionAction::Move;
                     take_me = TermReductionAction::Skip;
                 },
-                (Some(t1 @ FormulaTerm::Var(x1)), t2 @ Some(FormulaTerm::Var(x2)))
-                | (Some(t1 @ FormulaTerm::NegVar(x1)), t2 @ Some(FormulaTerm::NegVar(x2))) => {
+                (Some(FormulaTerm::Var(x1)), Some(FormulaTerm::Var(x2)))
+                | (Some(FormulaTerm::NegVar(x1)), Some(FormulaTerm::NegVar(x2))) => {
                     match x1.cmp(x2) {
                         /* ∧{x} ∨ ∧{x} ≡ ∧{x} */
                         Ordering::Equal => {
+                            dbg_log!(DBG_EXTRA, "∧{{x}} ∨ ∧{{x}} ≡ ∧{{x}}");
                             take_me = TermReductionAction::Move;
                             take_other = TermReductionAction::Skip;
                         },
                         /* (∧{x} ∧ p) ∨ ∧{x} ≡ ∧{x}, (∧{x} ∧ ¬p) ∨ ∧{x} ≡ ∧{x} */
                         Ordering::Less => {
+                            dbg_log!(
+                                DBG_EXTRA,
+                                "(∧{{x}} ∧ p) ∨ ∧{{x}} ≡ ∧{{x}}, (∧{{x}} ∧ ¬p) ∨ ∧{{x}} ≡ ∧{{x}}"
+                            );
                             if !less_strict {
                                 take_me = TermReductionAction::Skip;
                                 take_other = TermReductionAction::Ignore;
@@ -236,6 +251,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where Id: Ord + Eq + Clone {
                     match x.cmp(notx) {
                         /* (p ∧ ∧{x}) ∨ (¬p ∧ ∧{x}) ≡ ∧{x} */
                         Ordering::Equal => {
+                            dbg_log!(DBG_EXTRA, "(p ∧ ∧{{x}}) ∨ (¬p ∧ ∧{{x}}) ≡ ∧{{x}}");
                             /* XXX: If the formula is already less strict, then there must've
                              * been some difference between terms. This would render the 
                              * reduction invalid as it depends on all terms except p and ¬p
@@ -275,6 +291,8 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where Id: Ord + Eq + Clone {
                 (Some(_), None | Some(FormulaTerm::True))
                     | (None | Some(FormulaTerm::True), Some(_)) =>
                 {
+                    dbg_log!(DBG_EXTRA, "(∧{{x}} ∧ ⊤) ∨ ∧{{x}} ≡ ∧{{x}}");
+                    dbg_log!(DBG_EXTRA, "  (∧{{x}} ∧ p) ∨ ∧{{x}} ≡ ∧{{x}}, (∧{{x}} ∧ ¬p) ∨ ∧{{x}} ≡ ∧{{x}}");
                     /* (∧{x} ∧ ⊤) ∨ ∧{x} ≡ ∧{x} */
                     /* (∧{x} ∧ p) ∨ ∧{x} ≡ ∧{x}, (∧{x} ∧ ¬p) ∨ ∧{x} ≡ ∧{x} */
                     break 'fsm !less_strict;
@@ -306,8 +324,10 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where Id: Ord + Eq + Clone {
         };
 
         if reductible {
+            dbg_log!(DBG_EXTRA, "Reduction SUCCCESS!");
             Some(reduced)
         } else {
+            dbg_log!(DBG_EXTRA, "Reduction FAILURE!");
             None
         }
     }
@@ -329,12 +349,18 @@ impl<Id> DNFForm<Id> where Id: Ord + Eq {
     }
 }
 
-trait MergableDNFForm<Id> where Id: Ord + Eq {
+trait MergableDNFForm<Id> where
+    DNFCube<Id>: std::fmt::Debug,
+    Id: Ord + Eq
+{
     fn merge_cube(self, cube: DNFCube<Id>) -> Self;
     fn merge(self, other: Self) -> Self;
 }
 
-impl<Id> MergableDNFForm<Id> for DNFForm<Id> where Id: Ord + Eq + Clone {
+impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
+    DNFCube<Id>: std::fmt::Debug,
+    Id: Ord + Eq + Clone
+{
     fn merge_cube(mut self, cube: DNFCube<Id>) -> Self {
         for (idx, my_cube) in self.cubes.iter_mut().enumerate() {
             match my_cube.try_to_reduce_disjunction(&cube) {
