@@ -173,6 +173,7 @@ enum TermReductionAction {
 
 impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
     Self: std::fmt::Debug,
+    FormulaTerm<Id>: std::fmt::Debug,
     Id: Ord + Eq + Clone,
 {
     fn try_to_reduce_disjunction(&self, other: &Self) -> Option<Self> {
@@ -182,7 +183,8 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
 
         /* Becomes true, when the reduced cube prefix turns out to be less
          * strict than any of the input cubes prefixes */
-        let mut less_strict = false;
+        let mut less_strict_than_me = false;
+        let mut less_strict_than_other = false;
         
         /* Note: terms in cubes must be sorted! */
         let mut my_it = self.terms.iter().peekable();
@@ -195,6 +197,8 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
         let reductible: bool = 'fsm: loop {
             let mut take_me = TermReductionAction::Move;
             let mut take_other = TermReductionAction::Move;
+
+            dbg_log!(DBG_EXTRA, "Yielded {:?}, {:?}", my_yield, others_yield);
 
             /* Perform reductions */
             match (my_yield, others_yield) {
@@ -228,17 +232,23 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                                 DBG_EXTRA,
                                 "(∧{{x}} ∧ p) ∨ ∧{{x}} ≡ ∧{{x}}, (∧{{x}} ∧ ¬p) ∨ ∧{{x}} ≡ ∧{{x}}"
                             );
-                            if !less_strict {
+                            if !less_strict_than_other {
                                 take_me = TermReductionAction::Skip;
                                 take_other = TermReductionAction::Ignore;
+                                less_strict_than_me = true;
                             } else {
                                 break 'fsm false;
                             }
                         },
                         Ordering::Greater => {
-                            if !less_strict {
+                            dbg_log!(
+                                DBG_EXTRA,
+                                "∧{{x}} ∨ (∧{{x}} ∧ p) ≡ ∧{{x}}, ∧{{x}} ∨ (∧{{x}} ∧ ¬p) ≡ ∧{{x}}"
+                            );
+                            if !less_strict_than_me {
                                 take_me = TermReductionAction::Ignore;
                                 take_other = TermReductionAction::Skip;
+                                less_strict_than_other = true;
                             } else {
                                 break 'fsm false;
                             }
@@ -256,16 +266,17 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                              * been some difference between terms. This would render the 
                              * reduction invalid as it depends on all terms except p and ¬p
                              * being the same. */
-                            if !less_strict {
+                            if !(less_strict_than_me | less_strict_than_other) {
                                 take_me = TermReductionAction::Skip;
                                 take_other = TermReductionAction::Skip;
-                                less_strict = true;
+                                less_strict_than_me = true;
+                                less_strict_than_other = true;
                             } else {
                                 break 'fsm false;
                             }
                         },
                         Ordering::Less => {
-                            if !less_strict {
+                            if !(less_strict_than_me | less_strict_than_other) {
                                 take_me = TermReductionAction::Skip;
                                 take_other = TermReductionAction::Ignore;
                             } else {
@@ -273,19 +284,13 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                             }
                         },
                         Ordering::Greater => {
-                            if !less_strict {
+                            if !(less_strict_than_me | less_strict_than_other) {
                                 take_me = TermReductionAction::Ignore;
                                 take_other = TermReductionAction::Skip;
                             } else {
                                 break 'fsm false;
                             }
                         }
-                    }
-                    
-                    if x == notx && !less_strict {
-                        take_me = TermReductionAction::Skip;
-                        take_other = TermReductionAction::Skip;
-                        less_strict = true;
                     }
                 },
                 (Some(_), None | Some(FormulaTerm::True))
@@ -295,31 +300,43 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                     dbg_log!(DBG_EXTRA, "  (∧{{x}} ∧ p) ∨ ∧{{x}} ≡ ∧{{x}}, (∧{{x}} ∧ ¬p) ∨ ∧{{x}} ≡ ∧{{x}}");
                     /* (∧{x} ∧ ⊤) ∨ ∧{x} ≡ ∧{x} */
                     /* (∧{x} ∧ p) ∨ ∧{x} ≡ ∧{x}, (∧{x} ∧ ¬p) ∨ ∧{x} ≡ ∧{x} */
-                    break 'fsm !less_strict;
+                    break 'fsm !less_strict_than_me | less_strict_than_other; /* ! */
                 },
                 (None, None) => break 'fsm true,
             }
 
             match take_me {
                 TermReductionAction::Move => {
+                    dbg_log!(DBG_EXTRA, "Pushing (left) {:?}", my_yield);
                     if let Some(term) = my_yield {
                         reduced.terms.push(term.clone());
                     }
                     my_yield = my_it.next();
                 },
-                TermReductionAction::Skip => my_yield = my_it.next(),
-                TermReductionAction::Ignore => (),
+                TermReductionAction::Skip => {
+                    dbg_log!(DBG_EXTRA, "Skipping (left) {:?}", my_yield);
+                    my_yield = my_it.next();
+                }
+                TermReductionAction::Ignore => {
+                    dbg_log!(DBG_EXTRA, "Ignoring (left) {:?}", my_yield);
+                },
             }
 
             match take_other {
                 TermReductionAction::Move => {
+                    dbg_log!(DBG_EXTRA, "Pushing (right) {:?}", others_yield);
                     if let Some(term) = others_yield {
                         reduced.terms.push(term.clone());
                     }
                     others_yield = my_it.next();
                 },
-                TermReductionAction::Skip => others_yield = others_it.next(),
-                TermReductionAction::Ignore => (),
+                TermReductionAction::Skip => {
+                    dbg_log!(DBG_EXTRA, "Skipping (right) {:?}", others_yield);
+                    others_yield = others_it.next();
+                }
+                TermReductionAction::Ignore => {
+                    dbg_log!(DBG_EXTRA, "Ignoring (right) {:?}", others_yield);
+                },
             }
         };
 
@@ -351,6 +368,7 @@ impl<Id> DNFForm<Id> where Id: Ord + Eq {
 
 trait MergableDNFForm<Id> where
     DNFCube<Id>: std::fmt::Debug,
+    FormulaTerm<Id>: std::fmt::Debug,
     Id: Ord + Eq
 {
     fn merge_cube(self, cube: DNFCube<Id>) -> Self;
@@ -359,6 +377,7 @@ trait MergableDNFForm<Id> where
 
 impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
     DNFCube<Id>: std::fmt::Debug,
+    FormulaTerm<Id>: std::fmt::Debug,
     Id: Ord + Eq + Clone
 {
     fn merge_cube(mut self, cube: DNFCube<Id>) -> Self {

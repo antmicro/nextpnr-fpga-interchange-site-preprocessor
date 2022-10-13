@@ -109,7 +109,7 @@ fn test_reduction_of_two_different_cubes() {
 }
 
 #[test]
-fn test_cube_merging() {
+fn test_cube_failed_merging_simple() {
     use FormulaTerm::*;
     use TestVar::*;
 
