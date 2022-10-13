@@ -5,6 +5,9 @@
 use std::cmp::Ordering;
 
 mod intersperse;
+#[cfg(test)]
+mod tests;
+
 use self::intersperse::*;
 
 enum FormulaTerm<Id> where Id: Ord + Eq {
@@ -42,6 +45,8 @@ impl<Id> PartialEq for FormulaTerm<Id> where Id: Ord + Eq {
         match (self, other) {
             (Self::Var(a), Self::Var(b)) => a == b,
             (Self::NegVar(a), Self::NegVar(b)) => a == b,
+            (Self::False, Self::False) => true,
+            (Self::True, Self::True) => true,
             _ => false
         }
     }
@@ -101,7 +106,7 @@ impl<Id> Clone for FormulaTerm<Id> where Id: Ord + Eq + Clone {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 struct DNFCube<Id> where Id: Ord + Eq {
     terms: Vec<FormulaTerm<Id>>
 }
@@ -137,7 +142,7 @@ impl<Id> DNFCube<Id> where Id: Ord + Eq {
             loop {
                 if my_term_idx == self.terms.len() { break my_term_idx; }
                 let my_term = &self.terms[my_term_idx];
-                if &term > my_term { break my_term_idx; }
+                if &term < my_term { break my_term_idx; }
                 if &term == my_term { return; }
                 /* p ∧ ¬p ∧ ... ≡ ⊥ */
                 if term.neg_eq(my_term) {
@@ -186,7 +191,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where Id: Ord + Eq + Clone {
 
             /* Perform reductions */
             match (my_yield, others_yield) {
-                /* ⊥ ∧ ∧{x} ∨ ∧{y} ≡ ∧{y} */
+                /* (⊥ ∧ ∧{x}) ∨ ∧{y} ≡ ∧{y} */
                 (Some(FormulaTerm::False), _) => {
                     return Some(other.clone());
                 },
@@ -308,16 +313,6 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where Id: Ord + Eq + Clone {
     }
 }
 
-impl<Id> std::fmt::Debug for DNFCube<Id> where Id: Ord + Eq + std::fmt::Debug {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = self.terms.iter()
-            .map(|term| format!("{:?}", term))
-            .tmp_intersperse(" ∧ ".into())
-            .fold(String::new(), |s, sym| s + &sym);
-        write!(f, "{}", s)
-    }
-}
-
 impl<Id> Clone for DNFCube<Id> where Id: Ord + Eq + Clone {
     fn clone(&self) -> Self {
         Self { terms: self.terms.clone() }
@@ -373,12 +368,18 @@ impl<Id> std::fmt::Debug for DNFForm<Id> where Id: Ord + Eq + std::fmt::Debug {
         if self.cubes.len() == 0 {
             return write!(f, "DNFForm {{ f(X) = ⊥ }}");
         }
+        let cube_str = |c: &DNFCube<Id>| {
+            c.terms.iter()
+            .map(|term| format!("{:?}", term))
+            .tmp_intersperse(" ∧ ".into())
+            .fold(String::new(), |s, sym| s + &sym)
+        };
         let s = self.cubes.iter()
             .map(|cube| {
                 match (self.cubes.len(), cube.len()) {
                     (_, 0) => "⊤".to_string(),
-                    (_, 1) | (1, _) => format!("{:?}", cube),
-                    _ => format!("({:?})", cube),
+                    (_, 1) | (1, _) => cube_str(cube),
+                    _ => format!("({})", cube_str(cube)),
                 }
             })
             .tmp_intersperse(" ∨ ".into())
@@ -396,191 +397,12 @@ impl<Id> Clone for DNFForm<Id> where Id: Ord + Eq + Clone {
 /* WARNING: This is slow. */
 impl<Id> PartialEq for DNFForm<Id> where Id: Ord + Eq {
     fn eq(&self, other: &Self) -> bool {
-        for cube in &self.cubes {
+        'my_cube_loop: for cube in &self.cubes {
             for other_cube in &other.cubes {
-                if cube == other_cube { continue; }
+                if cube == other_cube { continue 'my_cube_loop; }
             }
             return false;
         }
         return true;
     }
-}
-
-/* ------------------------ TESTS ------------------------ */
-
-#[cfg(test)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
-enum TestVar {
-    A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, W, V, X, Y, Z,
-}
-
-#[cfg(test)]
-impl std::fmt::Debug for TestVar {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use TestVar::*;
-        let ch = match self {
-            A => 'a',
-            B => 'b',
-            C => 'c',
-            D => 'd',
-            E => 'e',
-            F => 'f',
-            G => 'g',
-            H => 'h',
-            I => 'i',
-            J => 'j',
-            K => 'k',
-            L => 'l',
-            M => 'm',
-            N => 'n',
-            O => 'o',
-            P => 'p',
-            Q => 'q',
-            R => 'r',
-            S => 's',
-            T => 't',
-            U => 'u',
-            W => 'w',
-            V => 'v',
-            X => 'x',
-            Y => 'y',
-            Z => 'z',
-        };
-        write!(f, "{}", ch)
-    }
-}
-
-#[test]
-fn test_reduction_of_two_same_cubes() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
-    let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![Var(X)] });
-    
-        
-    /* f2(X) = x */
-    let form2 = form1.clone();
-
-    let mut expected = form1.clone();
-
-    let result = form1.merge(form2);
-    assert_eq!(result, expected);
-}
-
-#[test]
-fn test_reduction_of_two_different_cubes() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
-    let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X)] });
-
-    /* f2(X) = x */
-    let form2 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![Var(X)] });
-
-    let result = form1.merge(form2);
-
-    assert_eq!(result, DNFForm::new().merge_cube(DNFCube { terms: vec![] }));
-}
-
-#[test]
-fn test_cube_merging() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
-    let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X)] })
-        .merge_cube(DNFCube { terms: vec![NegVar(Y), NegVar(Z)] });
-
-    let mut expected = DNFForm::new();
-    expected.cubes.push(DNFCube { terms: vec![NegVar(X)] });
-    expected.cubes.push(DNFCube { terms: vec![NegVar(Y), NegVar(Z)] });
-
-    assert_eq!(form1, expected);
-}
-
-#[test]
-fn test_reduction_of_complementaries_left() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
-    let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] })
-        .merge_cube(DNFCube { terms: vec![Var(X), NegVar(Y)] });
-
-    let mut expected = DNFForm::new();
-    expected.cubes.push(DNFCube { terms: vec![NegVar(Y)] });
-    
-    assert_eq!(form1, expected);
-}
-
-#[test]
-fn test_reduction_of_complementaries_right() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
-    let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![Var(X), NegVar(Y)] })
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] });
-
-    let mut expected = DNFForm::new();
-    expected.cubes.push(DNFCube { terms: vec![NegVar(Y)] });
-    
-    assert_eq!(form1, expected);
-}
-
-#[test]
-fn test_reduction_of_overspecification_left() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
-    let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] })
-        .merge_cube(DNFCube { terms: vec![NegVar(Y)] });
-
-    let mut expected = DNFForm::new();
-    expected.cubes.push(DNFCube { terms: vec![NegVar(Y)] });
-    
-    assert_eq!(form1, expected);
-}
-
-#[test]
-fn test_reduction_of_overspecification_right() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
-    let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(Y)] })
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y)] });
-
-    let mut expected = DNFForm::new();
-    expected.cubes.push(DNFCube { terms: vec![NegVar(Y)] });
-    
-    assert_eq!(form1, expected);
-}
-
-#[test]
-fn test_no_reduction_of_complementaries_left() {
-    use FormulaTerm::*;
-    use TestVar::*;
-
-    /* f1(X) = x */
-    let form1 = DNFForm::new()
-        .merge_cube(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] })
-        .merge_cube(DNFCube { terms: vec![Var(X), Var(Y), Var(Z)] });
-
-    let mut expected = DNFForm::new();
-    expected.cubes.push(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
-    expected.cubes.push(DNFCube { terms: vec![Var(X), Var(Y), Var(Z)] });
-    
-    assert_eq!(form1, expected);
 }

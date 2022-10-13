@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+if [[ -z "$FPGA_INTERCHANGE_TESTS_PATH" ]]; then
+    FPGA_INTERCHANGE_TESTS_PATH="/mnt/more/Documents/fpga-interchange-tests"
+fi
+
 if [[ -z "$DEVICE" ]]; then
     DEVICE=xczu7ev
 fi
