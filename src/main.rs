@@ -2,7 +2,12 @@ use clap::Parser;
 use std::path::Path;
 
 #[macro_use]
+extern crate lazy_static;
+
+#[macro_use]
 pub mod include_path;
+#[macro_use]
+pub mod log;
 pub mod ic_loader;
 pub mod logic_formula;
 pub mod site_brute_router;
