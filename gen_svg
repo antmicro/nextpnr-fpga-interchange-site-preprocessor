@@ -1,0 +1,9 @@
+#!/bin/bash
+
+DOTS_DIR=./dots
+SVG_DIR=./svgs
+
+for f in  ${DOTS_DIR}/*.dot; do
+    echo "Processing $f"
+    dot -Tsvg ${f} > svgs/`basename ${f} .dot`.svg
+done

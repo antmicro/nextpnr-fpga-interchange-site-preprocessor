@@ -76,7 +76,7 @@ fn test_reduction_of_two_same_cubes() {
 
     let expected = form1.clone();
 
-    let result = form1.conjunct(form2);
+    let result = form1.disjunct(form2);
     assert_eq!(result, expected);
 }
 
@@ -88,7 +88,7 @@ fn test_reduction_of_two_different_cubes() {
     let form2 = DNFForm::new()
         .add_cube(DNFCube { terms: vec![Var(X)] });
 
-    let result = form1.conjunct(form2);
+    let result = form1.disjunct(form2);
     let expected = DNFForm::new().add_cube(DNFCube { terms: vec![] });
 
     assert_eq!(result, expected);

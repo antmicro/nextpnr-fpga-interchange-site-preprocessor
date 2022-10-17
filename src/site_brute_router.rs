@@ -1,5 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use crate::IcStr;
+use crate::logic_formula::*;
+use lazy_static::__Deref;
+use replace_with::replace_with_or_abort;
+use std::thread;
+use crate::log::*;
 
 /* XXX: crate::ic_loader::LogicalNetlist_capnp::netlist::Direction doe not implement Hash */
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
@@ -34,7 +39,29 @@ struct BELInfo<'a> {
     reader: crate::ic_loader::DeviceResources_capnp::device::b_e_l::Reader<'a>
 }
 
-pub struct RoutingInfo(u8);
+pub struct RoutingInfo {
+    route_constraintes: Vec<DNFCube<ConstrainingElement>>,
+}
+
+impl RoutingInfo {
+    /* A primitive heuristic for sorting constraints by number of terms.
+     * The idea is that a greedy algorithm would set value of the least
+     * constraints when placing a cell. Perhaps a better heuristic could
+     * be found by performing some stochastic process across all routing
+     * infos to try to determine which ones collide with each other the
+     * least. */
+    fn default_sort(&mut self) {
+        self.route_constraintes.sort_by_key(|cube| cube.len());
+    }
+}
+
+impl From<PTPRMarker> for RoutingInfo {
+    fn from(marker: PTPRMarker) -> Self {
+        let mut me = Self { route_constraintes: marker.constraints.cubes };
+        me.default_sort();
+        me
+    }
+}
 
 /* Gathers BELs in the order matching the one in chipdb */
 fn gather_bels_in_tile_type<'a>(
@@ -99,7 +126,7 @@ impl RoutingGraph {
     fn connect<'a>(&'a mut self, from: usize, to: usize)
         -> Option<&'a mut RoutingGraphEdge>
     {
-        let mut edge = self.get_edge_mut(from, to);
+        let edge = self.get_edge_mut(from, to);
 
         match edge {
             true => None,
@@ -116,6 +143,111 @@ impl RoutingGraph {
 
     fn get_node_mut<'a>(&'a mut self, node: usize) -> &'a mut RoutingGraphNode {
         &mut self.nodes[node]
+    }
+
+    fn edges_from<'a>(&'a self, from: usize) -> impl Iterator<Item = usize> + 'a {
+        self.edges.iter()
+            .skip(from * self.nodes.len())
+            .take(self.nodes.len())
+            .enumerate()
+            .filter(|(_, e)| **e)
+            .map(|(idx, _)| idx)
+    }
+
+    fn edges_to<'a>(&'a self, to: usize) -> impl Iterator<Item = usize> + 'a {
+        self.edges.iter()
+            .skip(to)
+            .step_by(self.nodes.len())
+            .take(self.nodes.len())
+            .enumerate()
+            .filter(|(_, e)| **e)
+            .map(|(idx, _)| idx)
+    }
+}
+
+#[derive(PartialOrd, PartialEq, Ord, Eq, Clone, Debug)]
+enum ConstrainingElement {
+    Port(u32),
+    ClockSignalPolarity(u32),
+}
+
+struct PortToPortRouter<'g> {
+    graph: &'g RoutingGraph,
+    from: usize,
+    markers: Vec<PTPRMarker>,
+    queue: VecDeque<usize>,
+}
+
+struct PTPRMarker {
+    /* visited: usize, */
+    constraints: DNFForm<ConstrainingElement>,
+}
+
+impl<'g> PortToPortRouter<'g> {
+    fn new(graph: &'g RoutingGraph, from: usize) -> Self {
+        Self {
+            graph,
+            from,
+            markers: (0 .. graph.nodes.len()).map(|_| {
+                PTPRMarker {
+                    /* visited: 0, */
+                    constraints: DNFForm::new(),
+                }
+            }).collect(),
+            queue: VecDeque::new(),
+        }
+    }
+
+    fn routing_step(&mut self, previous: Option<usize>) -> Option<usize> {
+        let current_node = self.queue.pop_front()?;
+
+        self.scan_and_add_constraints(current_node, previous);
+
+        
+        for next in self.graph.edges_from(current_node) {
+            let is_subformular = {
+                let my_constr = &self.markers[current_node].constraints;
+                let next_constr = &self.markers[next].constraints;
+                my_constr.is_subformula_of(next_constr)
+            };
+            
+            if !is_subformular {
+                let my_constr = self.markers[current_node].constraints.clone();
+                replace_with_or_abort(&mut self.markers[next].constraints, |c| {
+                    c.disjunct(my_constr)
+                });
+                self.queue.push_back(next);
+            }
+        }
+
+        Some(current_node)
+    }
+
+    fn scan_and_add_constraints(&mut self, node: usize, previous: Option<usize>) {
+        if let Some(prev) = previous {
+            /* Add constraints for no multiple drivers */
+            for driver in self.graph.edges_to(node) {
+                if driver == prev { continue; }
+                replace_with_or_abort(&mut self.markers[node].constraints, |c| {
+                    c.conjunct_term(
+                        &FormulaTerm::NegVar(ConstrainingElement::Port(driver as u32))
+                    )
+                });
+            }
+        }
+    }
+
+    fn route_all(mut self) -> Vec<PTPRMarker> {
+        self.queue.clear();
+        self.queue.push_back(self.from);
+        let mut previous = None;
+        loop {
+            match self.routing_step(previous) {
+                Some(current) => previous = Some(current),
+                None => break,
+            }
+        }
+        self.markers
     }
 }
 
@@ -169,7 +301,8 @@ impl<'a> BruteRouter<'a> {
                 );
             }
             for pin_idx in 0 .. bel.pins.len() {
-                tile_belpin_idx.insert((bel_idx, pin_idx), belpin_idx);
+                let r = tile_belpin_idx.insert((bel_idx, pin_idx), belpin_idx);
+                assert!(r.is_none());
                 tile_belpin_idx_to_bel_pin.push((bel_idx, pin_idx));
                 belpin_idx += 1;
             }
@@ -224,21 +357,38 @@ impl<'a> BruteRouter<'a> {
                 let out_pin_idx = spip.get_outpin();
                 
                 let in_bel_name = ic_bel_pins.get(in_pin_idx).get_bel();
+                let bel_in_pin_name = ic_bel_pins.get(in_pin_idx).get_name();
                 let out_bel_name = ic_bel_pins.get(out_pin_idx).get_bel();
+                let bel_out_pin_name = ic_bel_pins.get(out_pin_idx).get_name();
                 /* (Pseudo)PIP should represent a single routing BEL */
                 assert!(in_bel_name == out_bel_name);
-
+                
                 let bel_idx = bel_name_to_bel_idx[&(stitt_idx as u32, in_bel_name)];
-                match graph.get_node_mut(bel_idx).bel {
+                let bel_in_pin_idx = bels[bel_idx].pins.iter()
+                    .enumerate()
+                    .find(|(_, pin)| pin.name == bel_in_pin_name)
+                    .unwrap().0;
+                let bel_out_pin_idx = bels[bel_idx].pins.iter()
+                    .enumerate()
+                    .find(|(_, pin)| pin.name == bel_out_pin_name)
+                    .unwrap().0;
+                let tile_in_pin_idx = tile_belpin_idx[&(bel_idx, bel_in_pin_idx)];
+                let tile_out_pin_idx = tile_belpin_idx[&(bel_idx, bel_out_pin_idx)];
+                
+                match graph.get_node_mut(tile_in_pin_idx).bel {
+                    ref mut bopt @ None => *bopt = Some(bel_idx),
+                    Some(other_bel_idx) => assert!(other_bel_idx == bel_idx),
+                }
+                match graph.get_node_mut(tile_out_pin_idx).bel {
                     ref mut bopt @ None => *bopt = Some(bel_idx),
                     Some(other_bel_idx) => assert!(other_bel_idx == bel_idx),
                 }
 
-                let _ = graph.connect(
-                    spip.get_inpin() as usize,
-                    spip.get_outpin() as usize);
+                let _ = graph.connect(tile_in_pin_idx, tile_out_pin_idx);
             }
         }
+
+        assert_eq!(tile_belpin_idx_to_bel_pin.len(), graph.nodes.len());
 
         Self {
             tt: tt.clone(),
@@ -250,10 +400,150 @@ impl<'a> BruteRouter<'a> {
         }
     }
 
-    /* fn route_pins(&self, from: usize, to: usize) -> RoutingInfo {
-        let (from_bel_idx, from_pin_idx) = self.tile_belpin_idx_to_bel_pin[from];
-        let (to_bel_idx, to_pin_idx) = self.tile_belpin_idx_to_bel_pin[to];
+    fn route_pins(graph: &RoutingGraph, from: usize) -> impl Iterator<Item = RoutingInfo> {
+        let router = PortToPortRouter::new(graph, from);
+        router.route_all()
+            .into_iter()
+            .map(Into::into)
+    }
 
-        let bel = self.bels[from_bel_idx];
-    } */
+    fn route_range(graph: &RoutingGraph, range: std::ops::Range<usize>)
+        -> HashMap<(usize, usize), RoutingInfo>
+    {
+        let pin_cnt = graph.nodes.len();
+        debug_assert!(range.start < range.end);
+        debug_assert!(range.start <= pin_cnt);
+        debug_assert!(range.end <= range.end);
+
+        let mut pin_to_pin_map = HashMap::new();
+        for from in range {
+            dbg_log!(DBG_INFO, "Routing from pin {}/{}", from, pin_cnt);
+            for (to, routing_info) in Self::route_pins(graph, from).enumerate() {
+                if routing_info.route_constraintes.len() != 0 {
+                    pin_to_pin_map.insert((from, to), routing_info);
+                }
+            }
+        }
+        pin_to_pin_map
+    }
+
+    pub fn route_all(self) -> HashMap<(usize, usize), RoutingInfo> {
+        Self::route_range(&self.graph, 0 .. self.tile_belpin_idx_to_bel_pin.len())
+    }
+
+    /* Not the best multithreading, bt it should still improve the runtime. */
+    pub fn route_all_multithreaded(self, thread_count: usize)
+        -> HashMap<(usize, usize), RoutingInfo>
+    {
+        use std::sync::Arc;
+
+        let mut total_map = HashMap::new();
+        let mut handles = Vec::new();
+        
+        let pin_cnt = self.tile_belpin_idx_to_bel_pin.len();
+
+        let graph = Arc::new(self.graph);
+        for range in split_range_nicely(0 .. pin_cnt, thread_count) {
+            let graph = Arc::clone(&graph);
+            let handle = thread::spawn(move || {
+                let graph = graph.deref();
+                Self::route_range(graph, range)
+            });
+            handles.push(handle);
+        }
+        for handle in handles {
+            let map = handle.join().unwrap();
+            total_map.extend(map.into_iter());
+        }
+        total_map
+    }
+
+    /* TODO: This should be in a separate file. */
+    /* Exports routing graph in DOT format. */
+    pub fn export_dot(&self, inputs: &crate::Inputs<'a>, name: &str) -> String {
+        let mut bel_subgraphs = HashMap::new();
+
+        /* Group pins of the same BELs into subgraphs */
+        let st_list = inputs.device.reborrow().get_site_type_list().unwrap();
+        for (node_idx, node) in self.graph.nodes.iter().enumerate() {
+            let (bel_idx, bel_pin_idx) = self.tile_belpin_idx_to_bel_pin[node_idx];
+            let stitt = self.bels[bel_idx].site_type_idx;
+            let bel_name = inputs.device.ic_str(self.bels[bel_idx].name).unwrap();
+            let st_idx = self.tt.get_site_types().unwrap().get(stitt).get_primary_type();
+            let st = st_list.get(st_idx);
+            let st_name = inputs.device.ic_str(st.get_name()).unwrap();
+
+            let bel_name = format!("{}_{}/{}", st_name, stitt, bel_name);
+
+            let bucket = bel_subgraphs.entry(bel_name).or_insert_with(|| Vec::new());
+            bucket.push(node_idx);
+        }
+        
+        /* Write DOT */
+        let mut dot = "# DOT Graph generated by NISP\n\n".to_string();
+        dot += &format!("digraph {} {{\n\n", name);
+
+        for (bel_name, bel_pins) in bel_subgraphs {
+            
+
+            dot += &format!("    subgraph cluster_{} {{\n", bel_name.replace('/', "__"));
+            dot += &format!("        node [style=filled];\n");
+            dot += &format!("        label = \"{}\";\n", bel_name);
+            dot += &format!("        color = \"blue\";\n");
+
+            for pin_idx in bel_pins {
+                //let node = &self.graph.nodes[pin_idx];
+                let (bel_idx, bel_pin_idx) = self.tile_belpin_idx_to_bel_pin[pin_idx];
+                let bel = &self.bels[bel_idx];
+                
+                //assert_eq!(inputs.device.ic_str(bel.name).unwrap(), bel_name);
+                //let bel_name = inputs.device.ic_str(bel.name).unwrap();
+                let pin_name =
+                    inputs.device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
+                
+                dot += &format!(
+                    "        {} [label=\"{}.{}\"];\n",
+                    pin_idx,
+                    bel_name,
+                    pin_name
+                );
+            }
+            dot += &format!("    }}\n\n");
+        }
+
+        for from in 0 .. self.graph.nodes.len() {
+            for to in self.graph.edges_from(from) {
+                dot += &format!("    {} -> {};\n", from, to);
+            }
+        }
+
+        dot += "}\n";
+
+        dot
+    }
 }
+
+/* Splits a range into `slices` possibly even ranges  */
+fn split_range_nicely(range: std::ops::Range<usize>, slices: usize)
+    -> impl Iterator<Item = std::ops::Range<usize>> where
+{
+    let len = range.end - range.start;
+    let split_sz = len / slices;
+    let total = split_sz * slices;
+    let left = len - total;
+    
+    (0 .. slices)
+        .scan((0, left), move |(current_idx, left), _| {
+            let my_len = if *left > 0 {
+                *left -= 1;
+                split_sz + 1
+            } else {
+                split_sz
+            };
+            let range = *current_idx .. (*current_idx + my_len);
+            *current_idx += my_len;
+            return Some(range);
+        })
+        .filter(|range| range.start != range.end)
+}
+

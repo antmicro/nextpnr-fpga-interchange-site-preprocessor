@@ -1,5 +1,7 @@
 use clap::Parser;
 use std::path::Path;
+use std::fs::File;
+use std::io::Write;
 
 #[macro_use]
 extern crate lazy_static;
@@ -14,6 +16,7 @@ pub mod site_brute_router;
 
 use crate::ic_loader::OpenOpts;
 use crate::site_brute_router::BruteRouter;
+use crate::log::*;
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -30,7 +33,13 @@ struct Args {
     #[clap(short, long, default_value = "6")]
     compression_level: u32,
     #[clap(long)]
-    tile_types: Option<Vec<String>>
+    tile_types: Option<Vec<String>>,
+    #[clap(long, default_value = "1")]
+    threads: usize,
+    #[clap(long)]
+    dot: Option<Vec<String>>,
+    #[clap(long, default_value = "")]
+    dot_prefix: String,
 }
 
 pub trait IcStr<'a> {
@@ -61,6 +70,7 @@ impl<'a> Inputs<'a> {
 
 fn main() {
     let args = Args::parse();
+    assert!(args.threads != 0);
 
     let archdef_msg = ic_loader::open(
         Path::new(&args.device), 
@@ -85,7 +95,46 @@ fn main() {
         })
         .collect();
     
-    for tt in tile_types {
-        let _ = BruteRouter::new(&inputs, &tt);
+    let mut export_all_dots = false;
+    let mut export_dots = std::collections::HashSet::new();
+    if let Some(dots) = args.dot {
+        for dot in &dots {
+            if dot == ":all" {
+                export_all_dots = true;
+            } else {
+                export_dots.insert(dot.clone());
+            }
+        }
     }
+    
+    for tt in tile_types {
+        let tile_name = inputs.device.ic_str(tt.get_name()).unwrap();
+        dbg_log!(DBG_INFO, "Processing tile {}", tile_name);
+        let brouter = BruteRouter::new(&inputs, &tt);
+
+        if export_all_dots || export_dots.contains(tile_name) {
+            export_dot(&inputs, &args.dot_prefix, &tile_name, &brouter).unwrap();
+        }
+
+        let routing_map = if args.threads == 1 {
+            brouter.route_all()
+        } else {
+            brouter.route_all_multithreaded(args.threads)
+        };
+        println!("No. of routing pairs for tile {}: {}", tile_name, routing_map.len());
+    }
+}
+
+fn export_dot<'a>(
+    inputs: &Inputs<'a>,
+    dot_prefix: &str,
+    tile_name: &str,
+    router: &BruteRouter<'a>
+) -> std::io::Result<usize> {
+
+    let dot = router.export_dot(&inputs, tile_name);
+    
+    let path = Path::new(dot_prefix).join(Path::new(&(tile_name.to_string() + ".dot")));
+    let mut file = File::create(path).unwrap();
+    file.write(dot.as_bytes())
 }

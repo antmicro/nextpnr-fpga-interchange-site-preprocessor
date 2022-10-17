@@ -47,12 +47,12 @@ macro_rules! dbg_log {
                 );
             }
         }
-    };
+    }
 }
 
 #[cfg(not(debug_assertions))]
 macro_rules! dbg_log {
-    ($lvl:expr, $fmt:literal $(, $( $v:expr )+)?) => {
+    ($lvl:expr, $fmt:literal $(, $v:expr )*) => {
         /* NOP */
     };
 }

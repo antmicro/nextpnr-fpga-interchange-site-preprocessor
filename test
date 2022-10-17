@@ -17,7 +17,7 @@ fi
 
 BBA=test_out/${DEVICE}_extra.bba
 
-EXTRA_OPTS=""
+EXTRA_OPTS=$EXTRA_OPTS
 BIN_PATH=""
 
 export FPGA_INTERCHANGE_SCHEMA_DIR="${FPGA_INTERCHANGE_TESTS_PATH}/third_party/fpga-interchange-schema"
@@ -32,6 +32,10 @@ fi
 
 if [[ -n "$TILE_TYPES" ]]; then
     EXTRA_OPTS="${EXTRA_OPTS} --tile-types ${TILE_TYPES}"
+fi
+
+if [[ -n "$THREADS" ]]; then
+    EXTRA_OPTS="${EXTRA_OPTS} --threads ${THREADS}"
 fi
 
 echo "Running \`./target/release/nisp $DEVICE_PATH $BBA $EXTRA_OPTS\`"

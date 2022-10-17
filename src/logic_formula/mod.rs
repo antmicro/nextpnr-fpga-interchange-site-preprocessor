@@ -11,7 +11,7 @@ mod tests;
 use self::intersperse::*;
 use crate::log::*;
 
-enum FormulaTerm<Id> where Id: Ord + Eq {
+pub enum FormulaTerm<Id> where Id: Ord + Eq {
     Var(Id),
     NegVar(Id),
     True,
@@ -20,7 +20,7 @@ enum FormulaTerm<Id> where Id: Ord + Eq {
 
 impl<Id> FormulaTerm<Id> where Id: Ord + Eq {
     /* Check if term is negation of the other term */
-    fn neg_eq(&self, other: &Self) -> bool {
+    pub fn neg_eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Var(a), Self::NegVar(b)) => a == b,
             (Self::NegVar(a), Self::Var(b)) => a == b,
@@ -108,21 +108,21 @@ impl<Id> Clone for FormulaTerm<Id> where Id: Ord + Eq + Clone {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-struct DNFCube<Id> where Id: Ord + Eq {
-    terms: Vec<FormulaTerm<Id>>
+pub struct DNFCube<Id> where Id: Ord + Eq {
+    pub terms: Vec<FormulaTerm<Id>>
 }
 
 /* Represents a conjunction group ("cube") in DNF boolean formula */
 impl<Id> DNFCube<Id> where Id: Ord + Eq {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self { terms: Vec::new() }
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.terms.len()
     }
 
-    fn is_true_const(&self) -> bool {
+    pub fn is_true_const(&self) -> bool {
         self.terms.iter().find(|term| {
             if let FormulaTerm::True = term {
                 false
@@ -132,11 +132,11 @@ impl<Id> DNFCube<Id> where Id: Ord + Eq {
         }).is_none()
     }
 
-    fn is_false_const(&self) -> bool {
+    pub fn is_false_const(&self) -> bool {
         self.terms.contains(&FormulaTerm::False)
     }
 
-    fn add_term(&mut self, term: FormulaTerm<Id>) {
+    pub fn add_term(&mut self, term: FormulaTerm<Id>) {
         /* Could be done faster in terms of time complexity */
         let idx = {
             let mut my_term_idx = 0;
@@ -158,7 +158,7 @@ impl<Id> DNFCube<Id> where Id: Ord + Eq {
     }
 }
 
-trait ReductibleDNFCube<Id> where
+pub trait ReductibleDNFCube<Id> where
     Self: Sized + std::fmt::Debug,
 {
     /* Attempts to reduce disjunction of two cubes into a single cube */
@@ -357,23 +357,34 @@ impl<Id> Clone for DNFCube<Id> where Id: Ord + Eq + Clone {
     }
 }
 
-struct DNFForm<Id> where Id: Ord + Eq {
-    cubes: Vec<DNFCube<Id>>,
+pub struct DNFForm<Id> where Id: Ord + Eq {
+    pub cubes: Vec<DNFCube<Id>>,
 }
 
 impl<Id> DNFForm<Id> where Id: Ord + Eq {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self { cubes: Vec::new() }
+    }
+
+    pub fn is_subformula_of(&self, other: &Self) -> bool {
+        'my_cube_loop: for cube in &self.cubes {
+            for other_cube in &other.cubes {
+                if cube == other_cube { continue 'my_cube_loop; }
+            }
+            return false;
+        }
+        return true;
     }
 }
 
-trait MergableDNFForm<Id> where
+pub trait MergableDNFForm<Id> where
     DNFCube<Id>: std::fmt::Debug,
     FormulaTerm<Id>: std::fmt::Debug,
     Id: Ord + Eq
 {
     fn add_cube(self, cube: DNFCube<Id>) -> Self;
-    fn conjunct(self, other: Self) -> Self;
+    fn disjunct(self, other: Self) -> Self;
+    fn conjunct_term(self, term: &FormulaTerm<Id>) -> Self;
 }
 
 impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
@@ -418,9 +429,16 @@ impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
     }
 
     /* Complexity: pretty bad */
-    fn conjunct(self, other: Self) -> Self {
+    fn disjunct(self, other: Self) -> Self {
         other.cubes.into_iter()
             .fold(self, |me, cube| me.add_cube(cube))
+    }
+
+    fn conjunct_term(mut self, term: &FormulaTerm<Id>) -> Self {
+        for cube in &mut self.cubes {
+            cube.add_term(term.clone());
+        }
+        self
     }
 }
 
@@ -458,12 +476,7 @@ impl<Id> Clone for DNFForm<Id> where Id: Ord + Eq + Clone {
 /* WARNING: This is slow. */
 impl<Id> PartialEq for DNFForm<Id> where Id: Ord + Eq {
     fn eq(&self, other: &Self) -> bool {
-        'my_cube_loop: for cube in &self.cubes {
-            for other_cube in &other.cubes {
-                if cube == other_cube { continue 'my_cube_loop; }
-            }
-            return false;
-        }
-        return true;
+        self.is_subformula_of(other)
+            && ((self.cubes.len() == other.cubes.len()) || other.is_subformula_of(self))
     }
 }
