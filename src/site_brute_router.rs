@@ -502,9 +502,8 @@ impl<'a> BruteRouter<'a> {
                     inputs.device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
                 
                 dot += &format!(
-                    "        {} [label=\"{}.{}\"];\n",
+                    "        {} [label=\"{}\"];\n",
                     pin_idx,
-                    bel_name,
                     pin_name
                 );
             }
