@@ -199,7 +199,7 @@ impl<'g> PortToPortRouter<'g> {
         }
     }
 
-    fn routing_step(&mut self, previous: Option<usize>) -> Option<usize> {
+    fn routing_step(&mut self) -> Option<usize> {
         let (previous_node, current_node) = self.queue.pop_front()?;
 
         self.scan_and_add_constraints(current_node, previous_node);
@@ -259,17 +259,12 @@ impl<'g> PortToPortRouter<'g> {
 
         self.queue.clear();
         self.queue.push_back((None, self.from));
-        let mut previous = None;
         loop {
             #[cfg(debug_assertions)]
             if let Some(ref mut counter) = step_counter { **counter += 1 };
 
-            match self.routing_step(previous) {
-                Some(current) => previous = Some(current),
-                None => break,
-            }
+            if let None = self.routing_step() { return self.markers; }
         }
-        self.markers
     }
 }
 
