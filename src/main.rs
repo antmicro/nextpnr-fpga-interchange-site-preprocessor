@@ -2,21 +2,26 @@ use clap::Parser;
 use std::path::Path;
 use std::fs::File;
 use std::io::Write;
+use std::collections::{HashSet, HashMap};
 
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate serde;
 
 #[macro_use]
 pub mod include_path;
 #[macro_use]
 pub mod log;
+pub mod common;
 pub mod ic_loader;
 pub mod logic_formula;
 pub mod site_brute_router;
 
 use crate::ic_loader::OpenOpts;
-use crate::site_brute_router::BruteRouter;
+use crate::site_brute_router::{BruteRouter, RoutingInfo};
 use crate::log::*;
+use crate::common::*;
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -40,17 +45,12 @@ struct Args {
     dot: Option<Vec<String>>,
     #[clap(long, default_value = "")]
     dot_prefix: String,
+    #[clap(long)]
+    json: Option<Vec<String>>,
+    #[clap(long, default_value = "")]
+    json_prefix: String,
 }
 
-pub trait IcStr<'a> {
-    fn ic_str(&self, id: u32) -> Result<&'a str, capnp::Error>;
-}
-
-impl<'a> IcStr<'a> for ic_loader::archdef::Root<'a> {
-    fn ic_str(&self, id: u32) -> Result<&'a str, capnp::Error> {
-        self.get_str_list().unwrap().get(id)
-    }
-}
 
 pub struct Inputs<'a> {
     pub device: ic_loader::archdef::Root<'a>,
@@ -66,6 +66,55 @@ impl<'a> Inputs<'a> {
                 .expect("Device file does not contain a valid root structure"),
         }
     }
+}
+
+struct Exporter {
+    prefix: String,
+    suffix: String,
+    export: HashSet<String>,
+    export_all: bool
+}
+
+impl Exporter {
+    fn new(arg_list: &Option<Vec<String>>, prefix: String, suffix: String) -> Self {
+        println!("{:?}", arg_list);
+        let mut export_all = false;
+        let mut export = HashSet::new();
+        if let Some(args) = arg_list {
+            for arg in args {
+                if arg == ":all" {
+                    export_all = true;
+                } else {
+                    export.insert(arg.clone());
+                }
+            }
+        }
+
+        Self { prefix, suffix, export, export_all }
+    }
+
+    fn ignore_or_export_str<F>(&self, name: &str, exporter: F)
+        -> std::io::Result<()>
+    where
+        F: FnOnce() -> String
+    {
+        if self.export_all || self.export.contains(name) {
+            let data = exporter();
+            let path = Path::new(&self.prefix)
+                .join(Path::new(&(name.to_string() + &self.suffix)));
+            let mut file = File::create(path).unwrap();
+            return file.write(data.as_bytes()).map(|_| ());
+        }
+        Ok(())
+    }
+}
+
+fn map_routing_map_to_serializable(routing_map: HashMap<(usize, usize), RoutingInfo>)
+    -> HashMap<String, RoutingInfo>
+{
+    routing_map.into_iter()
+        .map(|(k, v)| (format!("{}->{}", k.0, k.1), v))
+        .collect()    
 }
 
 fn main() {
@@ -95,26 +144,17 @@ fn main() {
         })
         .collect();
     
-    let mut export_all_dots = false;
-    let mut export_dots = std::collections::HashSet::new();
-    if let Some(dots) = args.dot {
-        for dot in &dots {
-            if dot == ":all" {
-                export_all_dots = true;
-            } else {
-                export_dots.insert(dot.clone());
-            }
-        }
-    }
+    let dot_exporter = Exporter::new(&args.dot, args.dot_prefix.clone(), ".dot".into());
+    let json_exporter = Exporter::new(&args.json, args.json_prefix.clone(), ".json".into());
     
     for tt in tile_types {
         let tile_name = inputs.device.ic_str(tt.get_name()).unwrap();
         dbg_log!(DBG_INFO, "Processing tile {}", tile_name);
-        let brouter = BruteRouter::new(&inputs, &tt);
+        let brouter = BruteRouter::new(&inputs.device, &tt);
 
-        if export_all_dots || export_dots.contains(tile_name) {
-            export_dot(&inputs, &args.dot_prefix, &tile_name, &brouter).unwrap();
-        }
+        dot_exporter.ignore_or_export_str(&tile_name, || {
+            brouter.export_dot(&inputs.device, &tile_name)
+        }).unwrap();
 
         let routing_map = if args.threads == 1 {
             brouter.route_all()
@@ -122,19 +162,11 @@ fn main() {
             brouter.route_all_multithreaded(args.threads)
         };
         println!("No. of routing pairs for tile {}: {}", tile_name, routing_map.len());
+
+        json_exporter.ignore_or_export_str(&tile_name, || {
+            serde_json::to_string_pretty(
+                &map_routing_map_to_serializable(routing_map)
+            ).unwrap()
+        }).unwrap();
     }
-}
-
-fn export_dot<'a>(
-    inputs: &Inputs<'a>,
-    dot_prefix: &str,
-    tile_name: &str,
-    router: &BruteRouter<'a>
-) -> std::io::Result<usize> {
-
-    let dot = router.export_dot(&inputs, tile_name);
-    
-    let path = Path::new(dot_prefix).join(Path::new(&(tile_name.to_string() + ".dot")));
-    let mut file = File::create(path).unwrap();
-    file.write(dot.as_bytes())
 }

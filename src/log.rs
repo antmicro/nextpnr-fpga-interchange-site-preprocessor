@@ -25,9 +25,9 @@ pub const DBG_EXTRA: usize = 3;
 
 pub const LOG_LVL_STR: &'static [&'static str] = &[
     /* 0 */ "CRITICAL",
-    /* 0 */ "WARNING",
-    /* 0 */ "INFO",
-    /* 0 */ "EXTRA INFO"
+    /* 1 */ "WARNING",
+    /* 2 */ "INFO",
+    /* 3 */ "EXTRA INFO"
 ];
 
 #[cfg(debug_assertions)]

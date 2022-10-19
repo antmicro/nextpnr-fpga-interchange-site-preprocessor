@@ -11,6 +11,7 @@ mod tests;
 use self::intersperse::*;
 use crate::log::*;
 
+#[derive(Serialize, Deserialize)]
 pub enum FormulaTerm<Id> where Id: Ord + Eq {
     Var(Id),
     NegVar(Id),
@@ -107,7 +108,7 @@ impl<Id> Clone for FormulaTerm<Id> where Id: Ord + Eq + Clone {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DNFCube<Id> where Id: Ord + Eq {
     pub terms: Vec<FormulaTerm<Id>>
 }
@@ -357,6 +358,7 @@ impl<Id> Clone for DNFCube<Id> where Id: Ord + Eq + Clone {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct DNFForm<Id> where Id: Ord + Eq {
     pub cubes: Vec<DNFCube<Id>>,
 }
@@ -385,6 +387,7 @@ pub trait MergableDNFForm<Id> where
     fn add_cube(self, cube: DNFCube<Id>) -> Self;
     fn disjunct(self, other: Self) -> Self;
     fn conjunct_term(self, term: &FormulaTerm<Id>) -> Self;
+    fn conjunct_term_with_last(self, term: FormulaTerm<Id>) -> Self;
 }
 
 impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
@@ -437,6 +440,13 @@ impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
     fn conjunct_term(mut self, term: &FormulaTerm<Id>) -> Self {
         for cube in &mut self.cubes {
             cube.add_term(term.clone());
+        }
+        self
+    }
+
+    fn conjunct_term_with_last(mut self, term: FormulaTerm<Id>) -> Self {
+        if let Some(cube) = self.cubes.last_mut() {
+            cube.add_term(term);
         }
         self
     }

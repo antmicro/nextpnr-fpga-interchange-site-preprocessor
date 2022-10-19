@@ -1,10 +1,12 @@
 use std::collections::{HashMap, VecDeque};
-use crate::IcStr;
+use crate::common::IcStr;
 use crate::logic_formula::*;
 use lazy_static::__Deref;
 use replace_with::replace_with_or_abort;
 use std::thread;
 use crate::log::*;
+use crate::ic_loader::archdef::Root as Device;
+use serde::{Serialize, Deserialize};
 
 /* XXX: crate::ic_loader::LogicalNetlist_capnp::netlist::Direction doe not implement Hash */
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
@@ -32,13 +34,13 @@ pub struct BELPin {
     pub dir: PinDir,
 }
 
-struct BELInfo<'a> {
+struct BELInfo {
     site_type_idx: u32, /* Site Type Idx IN TILE TYPE! */
     name: u32,
     pins: Vec<BELPin>,
-    reader: crate::ic_loader::DeviceResources_capnp::device::b_e_l::Reader<'a>
 }
 
+#[derive(Serialize)]
 pub struct RoutingInfo {
     route_constraintes: Vec<DNFCube<ConstrainingElement>>,
 }
@@ -65,11 +67,11 @@ impl From<PTPRMarker> for RoutingInfo {
 
 /* Gathers BELs in the order matching the one in chipdb */
 fn gather_bels_in_tile_type<'a>(
-    inputs: &'a crate::Inputs<'a>,
+    device: &'a Device<'a>,
     tt: &crate::ic_loader::archdef::TileTypeReader<'a>
-) -> Vec<BELInfo<'a>> {
+) -> Vec<BELInfo> {
     let mut bels = Vec::new();
-    let st_list = inputs.device.reborrow().get_site_type_list().unwrap();
+    let st_list = device.reborrow().get_site_type_list().unwrap();
     for (stitt_idx, stitt) in tt.reborrow().get_site_types().unwrap().iter().enumerate() {
         let st_idx = stitt.get_primary_type();
         let st = st_list.get(st_idx);
@@ -88,7 +90,6 @@ fn gather_bels_in_tile_type<'a>(
                             }
                         })
                         .collect(),
-                    reader
                 })
         );
     }
@@ -165,7 +166,7 @@ impl RoutingGraph {
     }
 }
 
-#[derive(PartialOrd, PartialEq, Ord, Eq, Clone, Debug)]
+#[derive(PartialOrd, PartialEq, Ord, Eq, Clone, Debug, Serialize, Deserialize)]
 enum ConstrainingElement {
     Port(u32),
     ClockSignalPolarity(u32),
@@ -175,11 +176,11 @@ struct PortToPortRouter<'g> {
     graph: &'g RoutingGraph,
     from: usize,
     markers: Vec<PTPRMarker>,
-    queue: VecDeque<usize>,
+    queue: VecDeque<(Option<usize>, usize)>,
 }
 
+#[derive(Serialize, Deserialize)]
 struct PTPRMarker {
-    /* visited: usize, */
     constraints: DNFForm<ConstrainingElement>,
 }
 
@@ -199,10 +200,9 @@ impl<'g> PortToPortRouter<'g> {
     }
 
     fn routing_step(&mut self, previous: Option<usize>) -> Option<usize> {
-        let current_node = self.queue.pop_front()?;
+        let (previous_node, current_node) = self.queue.pop_front()?;
 
-        self.scan_and_add_constraints(current_node, previous);
-
+        self.scan_and_add_constraints(current_node, previous_node);
         
         for next in self.graph.edges_from(current_node) {
             let is_subformular = {
@@ -216,7 +216,7 @@ impl<'g> PortToPortRouter<'g> {
                 replace_with_or_abort(&mut self.markers[next].constraints, |c| {
                     c.disjunct(my_constr)
                 });
-                self.queue.push_back(next);
+                self.queue.push_back((Some(current_node), next));
             }
         }
 
@@ -229,19 +229,41 @@ impl<'g> PortToPortRouter<'g> {
             for driver in self.graph.edges_to(node) {
                 if driver == prev { continue; }
                 replace_with_or_abort(&mut self.markers[node].constraints, |c| {
-                    c.conjunct_term(
-                        &FormulaTerm::NegVar(ConstrainingElement::Port(driver as u32))
+                    /* XXX: Last cube must've been added by us, so we won't modify
+                     * constraints for different routes. */
+                    c.conjunct_term_with_last(
+                        FormulaTerm::NegVar(ConstrainingElement::Port(driver as u32))
                     )
                 });
             }
         }
+
+        dbg_log!(
+            DBG_EXTRA,
+            "Added constraints for node {}. Current status: {:?}",
+            node,
+            self.markers[node].constraints
+        );
     }
 
-    fn route_all(mut self) -> Vec<PTPRMarker> {
+    fn init_constraints(&mut self, node: usize) {
+        self.markers[node].constraints = DNFForm::new()
+            .add_cube( DNFCube { terms: vec![FormulaTerm::True] })
+    }
+
+    fn route_all(mut self, mut step_counter: Option<&mut usize>) -> Vec<PTPRMarker> {
+        #[cfg(debug_assertions)]
+        if let Some(ref mut counter) = step_counter { **counter = 0 };
+
+        self.init_constraints(self.from);
+
         self.queue.clear();
-        self.queue.push_back(self.from);
+        self.queue.push_back((None, self.from));
         let mut previous = None;
         loop {
+            #[cfg(debug_assertions)]
+            if let Some(ref mut counter) = step_counter { **counter += 1 };
+
             match self.routing_step(previous) {
                 Some(current) => previous = Some(current),
                 None => break,
@@ -253,7 +275,7 @@ impl<'g> PortToPortRouter<'g> {
 
 pub struct BruteRouter<'a> {
     tt: crate::ic_loader::archdef::TileTypeReader<'a>,
-    bels: Vec<BELInfo<'a>>,
+    bels: Vec<BELInfo>,
     tile_belpin_idx_to_bel_pin: Vec<(usize, usize)>,
     pub pin_to_pin_map: HashMap<BELPin, HashMap<BELPin, RoutingInfo>>,
     pub sinks: Vec<BELPin>,
@@ -262,12 +284,12 @@ pub struct BruteRouter<'a> {
 
 impl<'a> BruteRouter<'a> {
     pub fn new(
-        inputs: &'a crate::Inputs<'a>,
+        device: &'a Device<'a>,
         tt: &crate::ic_loader::archdef::TileTypeReader<'a>,
     ) -> Self {
 
         /* Create mappings between elements and indices */
-        let bels = gather_bels_in_tile_type(&inputs, &tt);
+        let bels = gather_bels_in_tile_type(&device, &tt);
 
         let mut pin_to_pin_map = HashMap::new();
         //let mut drivers = Vec::new();
@@ -280,11 +302,11 @@ impl<'a> BruteRouter<'a> {
         for (bel_idx, bel) in bels.iter().enumerate() {
             let id = (bel.site_type_idx, bel.name);
             if let Some(other_idx) = bel_name_to_bel_idx.insert(id, bel_idx) {
-                let name = inputs.device.ic_str(bel.name).unwrap();
+                let name = device.ic_str(bel.name).unwrap();
                 let st_list = tt.reborrow().get_site_types().unwrap();
-                let other_st = inputs.device.reborrow().get_site_type_list().unwrap()
+                let other_st = device.reborrow().get_site_type_list().unwrap()
                     .get(st_list.get(bels[other_idx].site_type_idx).get_primary_type());
-                let st = inputs.device.reborrow().get_site_type_list().unwrap()
+                let st = device.reborrow().get_site_type_list().unwrap()
                     .get(st_list.get(bel.site_type_idx).get_primary_type());
                 
                 panic!(
@@ -292,12 +314,12 @@ impl<'a> BruteRouter<'a> {
                         "Conflicting BELs in tile type {}! ({}) {} conflicts with {}. ",
                         "Site types are {} and {}."
                     ),
-                    inputs.device.ic_str(tt.get_name()).unwrap(),
+                    device.ic_str(tt.get_name()).unwrap(),
                     name,
                     bel_idx,
                     other_idx,
-                    inputs.device.ic_str(other_st.get_name()).unwrap(),
-                    inputs.device.ic_str(st.get_name()).unwrap(),
+                    device.ic_str(other_st.get_name()).unwrap(),
+                    device.ic_str(st.get_name()).unwrap(),
                 );
             }
             for pin_idx in 0 .. bel.pins.len() {
@@ -312,7 +334,7 @@ impl<'a> BruteRouter<'a> {
         let mut graph = RoutingGraph::new(tile_belpin_idx.len());
         for (stitt_idx, stitt) in tt.get_site_types().unwrap().iter().enumerate() {
             let site_type_idx = stitt.get_primary_type();
-            let site_type = inputs.device.reborrow()
+            let site_type = device.reborrow()
                 .get_site_type_list().unwrap()
                 .get(site_type_idx);
             
@@ -339,7 +361,8 @@ impl<'a> BruteRouter<'a> {
 
                 for driver in drivers {
                     for sink in &sinks {
-                        if driver != *sink { /* XXX: driver can equal to sink in case of Inout */
+                        /* XXX: driver can equal to sink in case of Inout */
+                        if driver != *sink {
                             let _ = graph.connect(driver, *sink);
                         }
                     }
@@ -350,7 +373,7 @@ impl<'a> BruteRouter<'a> {
         /* Create routing graph: add edges for pseudo-pips (routing BELs) */
         for (stitt_idx, stitt) in tt.get_site_types().unwrap().iter().enumerate() {
             let st_idx = stitt.get_primary_type();
-            let st = inputs.device.reborrow().get_site_type_list().unwrap().get(st_idx);
+            let st = device.reborrow().get_site_type_list().unwrap().get(st_idx);
             let ic_bel_pins = st.reborrow().get_bel_pins().unwrap();
             for spip in st.get_site_p_i_ps().unwrap() {
                 let in_pin_idx = spip.get_inpin();
@@ -400,9 +423,13 @@ impl<'a> BruteRouter<'a> {
         }
     }
 
-    fn route_pins(graph: &RoutingGraph, from: usize) -> impl Iterator<Item = RoutingInfo> {
+    fn route_pins(
+        graph: &RoutingGraph,
+        from: usize,
+        step_counter: Option<&mut usize>, /* Can be used only in debug build */
+    ) -> impl Iterator<Item = RoutingInfo> {
         let router = PortToPortRouter::new(graph, from);
-        router.route_all()
+        router.route_all(step_counter)
             .into_iter()
             .map(Into::into)
     }
@@ -418,7 +445,10 @@ impl<'a> BruteRouter<'a> {
         let mut pin_to_pin_map = HashMap::new();
         for from in range {
             dbg_log!(DBG_INFO, "Routing from pin {}/{}", from, pin_cnt);
-            for (to, routing_info) in Self::route_pins(graph, from).enumerate() {
+            let mut step_counter = 0;
+            let routing_results = Self::route_pins(graph, from, Some(&mut step_counter));
+            dbg_log!(DBG_INFO, "  Number of steps: {}", step_counter);
+            for (to, routing_info) in routing_results.enumerate() {
                 if routing_info.route_constraintes.len() != 0 {
                     pin_to_pin_map.insert((from, to), routing_info);
                 }
@@ -431,7 +461,7 @@ impl<'a> BruteRouter<'a> {
         Self::route_range(&self.graph, 0 .. self.tile_belpin_idx_to_bel_pin.len())
     }
 
-    /* Not the best multithreading, bt it should still improve the runtime. */
+    /* Not the best multithreading, but should improve the runtime nevertheless. */
     pub fn route_all_multithreaded(self, thread_count: usize)
         -> HashMap<(usize, usize), RoutingInfo>
     {
@@ -460,18 +490,18 @@ impl<'a> BruteRouter<'a> {
 
     /* TODO: This should be in a separate file. */
     /* Exports routing graph in DOT format. */
-    pub fn export_dot(&self, inputs: &crate::Inputs<'a>, name: &str) -> String {
+    pub fn export_dot(&self, device: &Device<'a>, name: &str) -> String {
         let mut bel_subgraphs = HashMap::new();
 
         /* Group pins of the same BELs into subgraphs */
-        let st_list = inputs.device.reborrow().get_site_type_list().unwrap();
-        for (node_idx, node) in self.graph.nodes.iter().enumerate() {
-            let (bel_idx, bel_pin_idx) = self.tile_belpin_idx_to_bel_pin[node_idx];
+        let st_list = device.reborrow().get_site_type_list().unwrap();
+        for (node_idx, _) in self.graph.nodes.iter().enumerate() {
+            let (bel_idx, _) = self.tile_belpin_idx_to_bel_pin[node_idx];
             let stitt = self.bels[bel_idx].site_type_idx;
-            let bel_name = inputs.device.ic_str(self.bels[bel_idx].name).unwrap();
+            let bel_name = device.ic_str(self.bels[bel_idx].name).unwrap();
             let st_idx = self.tt.get_site_types().unwrap().get(stitt).get_primary_type();
             let st = st_list.get(st_idx);
-            let st_name = inputs.device.ic_str(st.get_name()).unwrap();
+            let st_name = device.ic_str(st.get_name()).unwrap();
 
             let bel_name = format!("{}_{}/{}", st_name, stitt, bel_name);
 
@@ -498,8 +528,7 @@ impl<'a> BruteRouter<'a> {
                 
                 //assert_eq!(inputs.device.ic_str(bel.name).unwrap(), bel_name);
                 //let bel_name = inputs.device.ic_str(bel.name).unwrap();
-                let pin_name =
-                    inputs.device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
+                let pin_name = device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
                 
                 dot += &format!(
                     "        {} [label=\"{}\"];\n",

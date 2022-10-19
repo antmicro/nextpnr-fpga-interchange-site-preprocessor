@@ -15,6 +15,10 @@ else
     DEVICE_PATH="${FPGA_INTERCHANGE_TESTS_PATH}/build/devices/${DEVICE}/${DEVICE}.device"
 fi
 
+if [[ -z "$LOG" ]]; then
+    LOG=nisp.log
+fi
+
 BBA=test_out/${DEVICE}_extra.bba
 
 EXTRA_OPTS=$EXTRA_OPTS
@@ -38,7 +42,7 @@ if [[ -n "$THREADS" ]]; then
     EXTRA_OPTS="${EXTRA_OPTS} --threads ${THREADS}"
 fi
 
-echo "Running \`./target/release/nisp $DEVICE_PATH $BBA $EXTRA_OPTS\`"
+echo "Running \`$BIN_PATH $DEVICE_PATH $BBA $EXTRA_OPTS\`"
 echo ""
 export RUST_BACKTRACE=1
-$BIN_PATH $DEVICE_PATH $BBA $EXTRA_OPTS
+$BIN_PATH $DEVICE_PATH $BBA $EXTRA_OPTS 2>&1 | tee $LOG

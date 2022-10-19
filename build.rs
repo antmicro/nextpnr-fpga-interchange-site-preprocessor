@@ -26,3 +26,7 @@ fn main() {
     compile_capnp(&schema_path.join("interchange/PhysicalNetlist.capnp"), &schema_path);
     compile_capnp(&schema_path.join("interchange/References.capnp"), &schema_path);
 }
+
+
+//F'(X) = F(X) + \bigg (\prod_{d\in D(p), d \neq p_{-1} }
+//\overline{\text{PortUsed}(d)} \bigg )\bigg(\prod_{r \in R(p)} r \in X \bigg)
