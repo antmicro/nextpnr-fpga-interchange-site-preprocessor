@@ -31,25 +31,35 @@ use crate::common::*;
     long_about = None
 )]
 struct Args {
+    #[clap(help = "fpga-interchange device file")]
     device: String,
+    #[clap(help = "BBA output file")]
     bba: String,
-    #[clap(long)]
+    #[clap(long, help = "Use raw (uncompressed) device file")]
     raw: bool,
-    #[clap(short, long, default_value = "6")]
-    compression_level: u32,
-    #[clap(long)]
+    #[clap(long, help = "Tile types to be routed")]
     tile_types: Option<Vec<String>>,
-    #[clap(long, default_value = "1")]
+    #[clap(
+        long,
+        default_value = "1",
+        help = "Number of threads to be used during preprocessing"
+    )]
     threads: usize,
-    #[clap(long)]
+    #[clap(
+        long,
+        help = "Tile types to have their routing graphs exported to graphviz .dot files"
+    )]
     dot: Option<Vec<String>>,
-    #[clap(long, default_value = "")]
+    #[clap(long, default_value = "", help = "Directory for saving .dot files")]
     dot_prefix: String,
-    #[clap(long)]
+    #[clap(
+        long,
+        help = "Tile types to have their routing cache exported to JSON format"
+    )]
     json: Option<Vec<String>>,
-    #[clap(long, default_value = "")]
+    #[clap(long, default_value = "", help = " Directory for saving .json files")]
     json_prefix: String,
-    #[clap(long, help="Do not optimize logic formulas for constraints")]
+    #[clap(long, help = "Do not optimize logic formulas for constraints")]
     no_formula_opt: bool,
 }
 
