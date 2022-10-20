@@ -42,7 +42,7 @@ struct BELInfo {
 
 #[derive(Serialize)]
 pub struct RoutingInfo {
-    route_constraintes: Vec<DNFCube<ConstrainingElement>>,
+    route_constraints: Vec<DNFCube<ConstrainingElement>>,
 }
 
 impl RoutingInfo {
@@ -53,13 +53,13 @@ impl RoutingInfo {
      * infos to try to determine which ones collide with each other the
      * least. */
     fn default_sort(&mut self) {
-        self.route_constraintes.sort_by_key(|cube| cube.len());
+        self.route_constraints.sort_by_key(|cube| cube.len());
     }
 }
 
 impl From<PTPRMarker> for RoutingInfo {
     fn from(marker: PTPRMarker) -> Self {
-        let mut me = Self { route_constraintes: marker.constraints.cubes };
+        let mut me = Self { route_constraints: marker.constraints.cubes };
         me.default_sort();
         me
     }
@@ -453,7 +453,7 @@ impl<'a> BruteRouter<'a> {
                 Self::route_pins(graph, from, Some(&mut step_counter), optimize);
             dbg_log!(DBG_INFO, "  Number of steps: {}", step_counter);
             for (to, routing_info) in routing_results.enumerate() {
-                if routing_info.route_constraintes.len() != 0 {
+                if routing_info.route_constraints.len() != 0 {
                     pin_to_pin_map.insert((from, to), routing_info);
                 }
             }
