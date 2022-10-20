@@ -116,6 +116,7 @@ impl RoutingGraph {
         }
     }
 
+    #[allow(unused)]
     fn get_edge<'a>(&'a self, from: usize, to: usize) -> &'a RoutingGraphEdge {
         &self.edges[from * self.nodes.len() + to]
     }
@@ -138,6 +139,7 @@ impl RoutingGraph {
         }
     }
 
+    #[allow(unused)]
     fn get_node<'a>(&'a self, node: usize) -> &'a RoutingGraphNode {
         &self.nodes[node]
     }
@@ -286,9 +288,8 @@ impl<'a> BruteRouter<'a> {
         /* Create mappings between elements and indices */
         let bels = gather_bels_in_tile_type(&device, &tt);
 
-        let mut pin_to_pin_map = HashMap::new();
-        //let mut drivers = Vec::new();
-        let mut sinks = Vec::new();
+        let pin_to_pin_map = HashMap::new();
+        let sinks = Vec::new();
         let mut bel_name_to_bel_idx = HashMap::new();
         let mut tile_belpin_idx = HashMap::new();
         let mut tile_belpin_idx_to_bel_pin = Vec::new();

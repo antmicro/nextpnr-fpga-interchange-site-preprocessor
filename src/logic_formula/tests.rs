@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(dead_code)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 enum TestVar {
     A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, W, V, X, Y, Z,
@@ -174,7 +175,7 @@ fn test_no_reduction_of_same() {
         .add_cube_opt(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] })
         .add_cube_opt(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
 
-    let mut expected = DNFForm::new()
+    let expected = DNFForm::new()
         .add_cube_opt(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
     
     assert_eq!(form1, expected);
@@ -186,7 +187,7 @@ fn test_reduction_of_same_2() {
         .add_cube_opt(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] })
         .add_cube_opt(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
 
-    let mut expected = DNFForm::new()
+    let expected = DNFForm::new()
         .add_cube_opt(DNFCube { terms: vec![NegVar(X), NegVar(Y), Var(Z)] });
     
     assert_eq!(form1, expected);

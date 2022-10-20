@@ -1,6 +1,4 @@
 use capnp;
-use std::io::{BufReader, BufWriter};
-use flate2;
 
 use super::*;
 

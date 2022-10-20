@@ -31,7 +31,6 @@ pub enum OpenWriteError {
 }
 
 const CPNP_MSG_MAXSIZE: usize = usize::MAX; // 4GiB
-const COMP_LVL: u32 = 6;
 
 pub struct OpenOpts {
     pub raw: bool,
