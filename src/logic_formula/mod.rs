@@ -179,7 +179,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
 {
     /* This is ridiculously complex but the goal is to do it in linear time. */
     fn try_to_reduce_disjunction(&self, other: &Self) -> Option<Self> {
-        dbg_log!(DBG_EXTRA, "Reducing disjunction between {:?} and {:?}", self, other);
+        dbg_log!(DBG_EXTRA2, "Reducing disjunction between {:?} and {:?}", self, other);
         /* Reduced cube in construction */
         let mut reduced = DNFCube::new();
 
@@ -196,26 +196,28 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
          * and constants */
         let mut my_yield = my_it.next();
         let mut others_yield = others_it.next();
-        let reductible: bool = 'fsm: loop {
+        let reductible: bool = 'fsm: loop { 
+            #[allow(unused_assignments)]
             let mut take_me = TermReductionAction::Move;
+            #[allow(unused_assignments)]
             let mut take_other = TermReductionAction::Move;
 
-            dbg_log!(DBG_EXTRA, "Yielded {:?}, {:?}", my_yield, others_yield);
+            dbg_log!(DBG_EXTRA2, "Yielded {:?}, {:?}", my_yield, others_yield);
 
             /* Perform reductions */
             match (my_yield, others_yield) {
                 /* (⊥ ∧ ∧{x}) ∨ ∧{y} ≡ ∧{y} */
                 (Some(FormulaTerm::False), _) => {
-                    dbg_log!(DBG_EXTRA, "(⊥ ∧ ∧{{x}}) ∨ ∧{{y}} ≡ ∧{{y}}");
+                    dbg_log!(DBG_EXTRA2, "(⊥ ∧ ∧{{x}}) ∨ ∧{{y}} ≡ ∧{{y}}");
                     return Some(other.clone());
                 },
                 (_, Some(FormulaTerm::False)) => {
-                    dbg_log!(DBG_EXTRA, "∧{{y}} ∨ (⊥ ∧ ∧{{x}}) ≡ ∧{{y}}");
+                    dbg_log!(DBG_EXTRA2, "∧{{y}} ∨ (⊥ ∧ ∧{{x}}) ≡ ∧{{y}}");
                     return Some(self.clone());
                 }
                 /* ⊤ ∨ ⊤ ≡ ⊤ */
                 (Some(FormulaTerm::True), Some(FormulaTerm::True)) => {
-                    dbg_log!(DBG_EXTRA, "⊤ ∨ ⊤ ≡ ⊤");
+                    dbg_log!(DBG_EXTRA2, "⊤ ∨ ⊤ ≡ ⊤");
                     take_other = TermReductionAction::Move;
                     take_me = TermReductionAction::Skip;
                 },
@@ -224,14 +226,14 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                     match x1.cmp(x2) {
                         /* ∧{x} ∨ ∧{x} ≡ ∧{x} */
                         Ordering::Equal => {
-                            dbg_log!(DBG_EXTRA, "∧{{x}} ∨ ∧{{x}} ≡ ∧{{x}}");
+                            dbg_log!(DBG_EXTRA2, "∧{{x}} ∨ ∧{{x}} ≡ ∧{{x}}");
                             take_me = TermReductionAction::Move;
                             take_other = TermReductionAction::Skip;
                         },
                         /* (∧{x} ∧ p) ∨ ∧{x} ≡ ∧{x}, (∧{x} ∧ ¬p) ∨ ∧{x} ≡ ∧{x} */
                         Ordering::Less => {
                             dbg_log!(
-                                DBG_EXTRA,
+                                DBG_EXTRA2,
                                 "(∧{{x}} ∧ p) ∨ ∧{{x}} ≡ ∧{{x}}, (∧{{x}} ∧ ¬p) ∨ ∧{{x}} ≡ ∧{{x}}"
                             );
                             if !less_strict_than_other {
@@ -244,7 +246,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                         },
                         Ordering::Greater => {
                             dbg_log!(
-                                DBG_EXTRA,
+                                DBG_EXTRA2,
                                 "∧{{x}} ∨ (∧{{x}} ∧ p) ≡ ∧{{x}}, ∧{{x}} ∨ (∧{{x}} ∧ ¬p) ≡ ∧{{x}}"
                             );
                             if !less_strict_than_me {
@@ -263,7 +265,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                     match x.cmp(y) {
                         /* (p ∧ ∧{x}) ∨ (¬p ∧ ∧{x}) ≡ ∧{x} */
                         Ordering::Equal => {
-                            dbg_log!(DBG_EXTRA, "(p ∧ ∧{{x}}) ∨ (¬p ∧ ∧{{x}}) ≡ ∧{{x}}");
+                            dbg_log!(DBG_EXTRA2, "(p ∧ ∧{{x}}) ∨ (¬p ∧ ∧{{x}}) ≡ ∧{{x}}");
                             /* XXX: If the formula is already less strict, then there must've
                              * been some difference between terms. This would render the 
                              * reduction invalid as it depends on all terms except p and ¬p
@@ -281,6 +283,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                             if !(less_strict_than_me | less_strict_than_other) {
                                 take_me = TermReductionAction::Skip;
                                 take_other = TermReductionAction::Ignore;
+                                less_strict_than_me = true;
                             } else {
                                 break 'fsm false;
                             }
@@ -289,6 +292,7 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                             if !(less_strict_than_me | less_strict_than_other) {
                                 take_me = TermReductionAction::Ignore;
                                 take_other = TermReductionAction::Skip;
+                                less_strict_than_other = true;
                             } else {
                                 break 'fsm false;
                             }
@@ -298,8 +302,8 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
                 (Some(_), None | Some(FormulaTerm::True))
                     | (None | Some(FormulaTerm::True), Some(_)) =>
                 {
-                    dbg_log!(DBG_EXTRA, "(∧{{x}} ∧ ⊤) ∨ ∧{{x}} ≡ ∧{{x}}");
-                    dbg_log!(DBG_EXTRA, "  (∧{{x}} ∧ p) ∨ ∧{{x}} ≡ ∧{{x}}, (∧{{x}} ∧ ¬p) ∨ ∧{{x}} ≡ ∧{{x}}");
+                    dbg_log!(DBG_EXTRA2, "(∧{{x}} ∧ ⊤) ∨ ∧{{x}} ≡ ∧{{x}}");
+                    dbg_log!(DBG_EXTRA2, "  (∧{{x}} ∧ p) ∨ ∧{{x}} ≡ ∧{{x}}, (∧{{x}} ∧ ¬p) ∨ ∧{{x}} ≡ ∧{{x}}");
                     /* (∧{x} ∧ ⊤) ∨ ∧{x} ≡ ∧{x} */
                     /* (∧{x} ∧ p) ∨ ∧{x} ≡ ∧{x}, (∧{x} ∧ ¬p) ∨ ∧{x} ≡ ∧{x} */
                     break 'fsm !less_strict_than_me | less_strict_than_other; /* ! */
@@ -309,44 +313,44 @@ impl<Id> ReductibleDNFCube<Id> for DNFCube<Id> where
 
             match take_me {
                 TermReductionAction::Move => {
-                    dbg_log!(DBG_EXTRA, "Pushing (left) {:?}", my_yield);
+                    dbg_log!(DBG_EXTRA2, "Pushing (left) {:?}", my_yield);
                     if let Some(term) = my_yield {
                         reduced.terms.push(term.clone());
                     }
                     my_yield = my_it.next();
                 },
                 TermReductionAction::Skip => {
-                    dbg_log!(DBG_EXTRA, "Skipping (left) {:?}", my_yield);
+                    dbg_log!(DBG_EXTRA2, "Skipping (left) {:?}", my_yield);
                     my_yield = my_it.next();
                 }
                 TermReductionAction::Ignore => {
-                    dbg_log!(DBG_EXTRA, "Ignoring (left) {:?}", my_yield);
+                    dbg_log!(DBG_EXTRA2, "Ignoring (left) {:?}", my_yield);
                 },
             }
 
             match take_other {
                 TermReductionAction::Move => {
-                    dbg_log!(DBG_EXTRA, "Pushing (right) {:?}", others_yield);
+                    dbg_log!(DBG_EXTRA2, "Pushing (right) {:?}", others_yield);
                     if let Some(term) = others_yield {
                         reduced.terms.push(term.clone());
                     }
                     others_yield = my_it.next();
                 },
                 TermReductionAction::Skip => {
-                    dbg_log!(DBG_EXTRA, "Skipping (right) {:?}", others_yield);
+                    dbg_log!(DBG_EXTRA2, "Skipping (right) {:?}", others_yield);
                     others_yield = others_it.next();
                 }
                 TermReductionAction::Ignore => {
-                    dbg_log!(DBG_EXTRA, "Ignoring (right) {:?}", others_yield);
+                    dbg_log!(DBG_EXTRA2, "Ignoring (right) {:?}", others_yield);
                 },
             }
         };
 
         if reductible {
-            dbg_log!(DBG_EXTRA, "Reduction SUCCCESS! Reduced form: {:?}", reduced);
+            dbg_log!(DBG_EXTRA2, "Reduction SUCCCESS! Reduced form: {:?}", reduced);
             Some(reduced)
         } else {
-            dbg_log!(DBG_EXTRA, "Reduction FAILURE!");
+            dbg_log!(DBG_EXTRA2, "Reduction FAILURE!");
             None
         }
     }
@@ -384,19 +388,23 @@ pub trait MergableDNFForm<Id> where
     FormulaTerm<Id>: std::fmt::Debug,
     Id: Ord + Eq
 {
+    fn add_cube_opt(self, cube: DNFCube<Id>) -> Self;
     fn add_cube(self, cube: DNFCube<Id>) -> Self;
+    fn disjunct_opt(self, other: Self) -> Self;
     fn disjunct(self, other: Self) -> Self;
     fn conjunct_term(self, term: &FormulaTerm<Id>) -> Self;
     fn conjunct_term_with_last(self, term: FormulaTerm<Id>) -> Self;
+    fn optimize(self) -> Self;
 }
 
 impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
     DNFCube<Id>: std::fmt::Debug,
     FormulaTerm<Id>: std::fmt::Debug,
-    Id: Ord + Eq + Clone
+    Id: Ord + Eq + Clone,
+    Self: std::fmt::Debug
 {
     /* Complexity: O(terms * cubes) */
-    fn add_cube(mut self, cube: DNFCube<Id>) -> Self {
+    fn add_cube_opt(mut self, cube: DNFCube<Id>) -> Self {
         let mut reduced = false;
         'outer: loop {
             'inner: for (idx, my_cube) in self.cubes.iter_mut().enumerate() {
@@ -431,7 +439,17 @@ impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
         self
     }
 
+    fn add_cube(mut self, cube: DNFCube<Id>) -> Self {
+        self.cubes.push(cube);
+        self
+    }
+
     /* Complexity: pretty bad */
+    fn disjunct_opt(self, other: Self) -> Self {
+        other.cubes.into_iter()
+            .fold(self, |me, cube| me.add_cube_opt(cube))
+    }
+
     fn disjunct(self, other: Self) -> Self {
         other.cubes.into_iter()
             .fold(self, |me, cube| me.add_cube(cube))
@@ -448,6 +466,63 @@ impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
         if let Some(cube) = self.cubes.last_mut() {
             cube.add_term(term);
         }
+        self
+    }
+
+    fn optimize(mut self) -> Self {
+        /* Wrapped in DNFForm only for debugging purposes */
+        let mut facts = DNFForm { cubes: Vec::new() };
+
+        dbg_log!(DBG_EXTRA1, "+---------------------------------------------------------+");
+        dbg_log!(DBG_EXTRA1, ">>>>>>>>>>>> Optimising formula {:?}", &self);
+        dbg_log!(DBG_EXTRA1, "+---------------------------------------------------------+");
+        
+        'outer: loop {
+            dbg_log!(DBG_EXTRA1, ">>>>> Form: {:?}, Other facts: {:?}", self, facts);
+            let mut reduction = None;
+            let facts_iter = self.cubes.iter().chain(facts.cubes.iter());
+            'fact_loop: for (fact_idx, fact) in facts_iter.enumerate() {
+                for (cube_idx, cube) in self.cubes.iter().enumerate() {
+                    match cube.try_to_reduce_disjunction(&fact) {
+                        Some(new_cube) => {
+                            if new_cube.terms != cube.terms {
+                                reduction = Some((new_cube, cube_idx, fact_idx));
+                                break 'fact_loop;
+                            }
+                        },
+                        None => (),
+                    }
+                }
+            }
+            if let Some((new_cube, at, of)) = reduction {
+                { /* Literally just debug code */
+                    let of_cube = if of < self.cubes.len() {
+                        &self.cubes[of]
+                    } else {
+                        &facts.cubes[of - self.cubes.len()]
+                    };
+                    
+                    dbg_log!(
+                        DBG_EXTRA1, ">>>>> {:?}, {:?} => {:?}",
+                        self.cubes[at],
+                        of_cube,
+                        new_cube
+                    );
+                }
+
+                facts.cubes.push(new_cube.clone());
+                self.cubes.push(new_cube);
+                let old_cube = self.cubes.swap_remove(at);
+                facts.cubes.push(old_cube);
+                /* XXX: of > self.cubes.len() when of is a fact outside of the formula */
+                if of < self.cubes.len() {
+                    self.cubes.remove(of);
+                }
+            } else {
+                break 'outer;
+            }
+        }
+
         self
     }
 }

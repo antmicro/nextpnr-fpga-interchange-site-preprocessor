@@ -49,6 +49,8 @@ struct Args {
     json: Option<Vec<String>>,
     #[clap(long, default_value = "")]
     json_prefix: String,
+    #[clap(long, help="Do not optimize logic formulas for constraints")]
+    no_formula_opt: bool,
 }
 
 
@@ -157,9 +159,9 @@ fn main() {
         }).unwrap();
 
         let routing_map = if args.threads == 1 {
-            brouter.route_all()
+            brouter.route_all(!args.no_formula_opt)
         } else {
-            brouter.route_all_multithreaded(args.threads)
+            brouter.route_all_multithreaded(args.threads, !args.no_formula_opt)
         };
         println!("No. of routing pairs for tile {}: {}", tile_name, routing_map.len());
 

@@ -21,13 +21,15 @@ lazy_static! {
 pub const DBG_CRITICAL: usize = 0;
 pub const DBG_WARN: usize = 1;
 pub const DBG_INFO: usize = 2;
-pub const DBG_EXTRA: usize = 3;
+pub const DBG_EXTRA1: usize = 3;
+pub const DBG_EXTRA2: usize = 4;
 
 pub const LOG_LVL_STR: &'static [&'static str] = &[
     /* 0 */ "CRITICAL",
     /* 1 */ "WARNING",
     /* 2 */ "INFO",
-    /* 3 */ "EXTRA INFO"
+    /* 3 */ "EXTRA INFO",
+    /* 4 */ "EXTRA INFO"
 ];
 
 #[cfg(debug_assertions)]

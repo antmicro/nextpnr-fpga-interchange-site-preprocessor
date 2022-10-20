@@ -239,7 +239,7 @@ impl<'g> PortToPortRouter<'g> {
         }
 
         dbg_log!(
-            DBG_EXTRA,
+            DBG_EXTRA1,
             "Added constraints for node {}. Current status: {:?}",
             node,
             self.markers[node].constraints
@@ -422,14 +422,21 @@ impl<'a> BruteRouter<'a> {
         graph: &RoutingGraph,
         from: usize,
         step_counter: Option<&mut usize>, /* Can be used only in debug build */
+        optimize: bool
     ) -> impl Iterator<Item = RoutingInfo> {
         let router = PortToPortRouter::new(graph, from);
         router.route_all(step_counter)
             .into_iter()
+            .map(move |mut marker| {
+                if optimize {
+                    marker.constraints = marker.constraints.optimize()
+                }
+                marker
+            })
             .map(Into::into)
     }
 
-    fn route_range(graph: &RoutingGraph, range: std::ops::Range<usize>)
+    fn route_range(graph: &RoutingGraph, range: std::ops::Range<usize>, optimize: bool)
         -> HashMap<(usize, usize), RoutingInfo>
     {
         let pin_cnt = graph.nodes.len();
@@ -441,7 +448,8 @@ impl<'a> BruteRouter<'a> {
         for from in range {
             dbg_log!(DBG_INFO, "Routing from pin {}/{}", from, pin_cnt);
             let mut step_counter = 0;
-            let routing_results = Self::route_pins(graph, from, Some(&mut step_counter));
+            let routing_results =
+                Self::route_pins(graph, from, Some(&mut step_counter), optimize);
             dbg_log!(DBG_INFO, "  Number of steps: {}", step_counter);
             for (to, routing_info) in routing_results.enumerate() {
                 if routing_info.route_constraintes.len() != 0 {
@@ -452,12 +460,12 @@ impl<'a> BruteRouter<'a> {
         pin_to_pin_map
     }
 
-    pub fn route_all(self) -> HashMap<(usize, usize), RoutingInfo> {
-        Self::route_range(&self.graph, 0 .. self.tile_belpin_idx_to_bel_pin.len())
+    pub fn route_all(self, optimize: bool) -> HashMap<(usize, usize), RoutingInfo> {
+        Self::route_range(&self.graph, 0 .. self.tile_belpin_idx_to_bel_pin.len(), optimize)
     }
 
     /* Not the best multithreading, but should improve the runtime nevertheless. */
-    pub fn route_all_multithreaded(self, thread_count: usize)
+    pub fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
         -> HashMap<(usize, usize), RoutingInfo>
     {
         use std::sync::Arc;
@@ -472,7 +480,7 @@ impl<'a> BruteRouter<'a> {
             let graph = Arc::clone(&graph);
             let handle = thread::spawn(move || {
                 let graph = graph.deref();
-                Self::route_range(graph, range)
+                Self::route_range(graph, range, optimize)
             });
             handles.push(handle);
         }
