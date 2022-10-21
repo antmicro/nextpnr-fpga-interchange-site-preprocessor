@@ -79,23 +79,6 @@ struct Args {
     no_formula_opt: bool,
 }
 
-
-pub struct Inputs<'a> {
-    pub device: ic_loader::archdef::Root<'a>,
-    /* pub netlist: ic_loader::logical_netlist::Root<'a>, */
-}
-
-impl<'a> Inputs<'a> {
-    fn new(archdef: &'a Box<dyn ic_loader::MsgReader>/* , lnet: &'a Box<dyn ic_loader::MsgReader> */)
-        -> Self
-    {
-        Self {
-            device: archdef.get_archdef_root()
-                .expect("Device file does not contain a valid root structure"),
-        }
-    }
-}
-
 struct Exporter {
     prefix: String,
     suffix: String,
@@ -154,16 +137,17 @@ fn main() {
         OpenOpts { raw: args.raw }
     ).expect("Couldn't open device file");
     
-    let inputs = Inputs::new(&archdef_msg/* , &lnet_msg */);
+    let device = archdef_msg.get_archdef_root()
+        .expect("Device file does not contain a valid root structure");
 
-    let tile_types: Vec<_> = inputs.device.reborrow().get_tile_type_list().unwrap()
+    let tile_types: Vec<_> = device.reborrow().get_tile_type_list().unwrap()
         .into_iter()
         .filter(|tt| {
             match &args.tile_types {
                 Some(accepted_tile_types) => {
                     accepted_tile_types.iter()
                         .find(|tt_name| {
-                            *tt_name == inputs.device.ic_str(tt.get_name()).unwrap()
+                            *tt_name == device.ic_str(tt.get_name()).unwrap()
                         })
                         .is_some()
                 },
@@ -176,12 +160,12 @@ fn main() {
     let json_exporter = Exporter::new(&args.json, args.json_prefix.clone(), ".json".into());
     
     for tt in tile_types {
-        let tile_name = inputs.device.ic_str(tt.get_name()).unwrap();
+        let tile_name = device.ic_str(tt.get_name()).unwrap();
         dbg_log!(DBG_INFO, "Processing tile {}", tile_name);
-        let brouter = BruteRouter::new(&inputs.device, &tt);
+        let brouter = BruteRouter::new(&device, &tt);
 
         dot_exporter.ignore_or_export_str(&tile_name, || {
-            brouter.export_dot(&inputs.device, &tile_name)
+            brouter.export_dot(&device, &tile_name)
         }).unwrap();
 
         let routing_map = if args.threads == 1 {
