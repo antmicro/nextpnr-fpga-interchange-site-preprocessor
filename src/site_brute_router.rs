@@ -542,12 +542,9 @@ impl<'a> BruteRouter<'a> {
             dot += &format!("        color = \"blue\";\n");
 
             for pin_idx in bel_pins {
-                //let node = &self.graph.nodes[pin_idx];
                 let (bel_idx, bel_pin_idx) = self.tile_belpin_idx_to_bel_pin[pin_idx];
                 let bel = &self.bels[bel_idx];
                 
-                //assert_eq!(inputs.device.ic_str(bel.name).unwrap(), bel_name);
-                //let bel_name = inputs.device.ic_str(bel.name).unwrap();
                 let pin_name = device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
                 
                 dot += &format!(
