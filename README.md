@@ -58,6 +58,31 @@ for listing all tiles in the architecture.
 This script can be used to simplify compiling, running and debugging NISP.
 It's short, so the best way to understand what it does is just tot read it.
 
+## JSON output
+
+The JSON output is created by serializing internal structures of NISP. Its structure might
+change over time. As such, I won't be documenting its structure in detail, instead I'm
+going to provide a general overview of the content of generated JSONs.
+
+Currently the JSON files which are outputted per-tile contain the following information:
+
+* Routable connections. Th top-level dictionary contains keys consisting of two numbers
+  joined by `->` symbol. Those two numbers are indices of BELs. The BELs are indexed in the
+  as a continuous array built by enumarating all bel pins in a tile type given the following
+  hierarchy: _tile type_ -> _site type_ -> _BEL_ -> _BEL pin_. This indexing is meant to 
+  mirror the way python-fpga-interchange writes BBAs which are used to generated binary blobs
+  for Nextpnr.
+
+* Each routable connection has two lists associated with it.
+  1. _requires_ list, which lists states which are required for given routing.
+  2. _implies_ list, which lists the states which are activated when a given routing is used.
+
+  Those lists contain alternative sets, of which any can be used.
+
+* The current constraint information is limited to constraints that would prevent invalid
+  pseudo-pip states and reusage of already claimed wires. However, support for cell placements
+  constraints is yet to be added, thus nextpnr's site placer can't fully rely on this feature
+  yet.
 
 -------------------------------------------------
 
