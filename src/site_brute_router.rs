@@ -58,7 +58,8 @@ struct BELInfo {
 
 #[derive(Serialize)]
 pub struct RoutingInfo {
-    route_constraints: Vec<DNFCube<ConstrainingElement>>,
+    requires: Vec<DNFCube<ConstrainingElement>>,
+    implies: Vec<DNFCube<ConstrainingElement>>,
 }
 
 impl RoutingInfo {
@@ -69,13 +70,19 @@ impl RoutingInfo {
      * infos to try to determine which ones collide with each other the
      * least. */
     fn default_sort(&mut self) {
-        self.route_constraints.sort_by_key(|cube| cube.len());
+        let heuristic = |cube: &DNFCube<ConstrainingElement>| cube.len();
+
+        self.implies.sort_by_key(&heuristic);
+        self.requires.sort_by_key(&heuristic)
     }
 }
 
 impl From<PTPRMarker> for RoutingInfo {
     fn from(marker: PTPRMarker) -> Self {
-        let mut me = Self { route_constraints: marker.constraints.cubes };
+        let mut me = Self {
+            requires: marker.constraints.cubes,
+            implies: marker.activated.cubes,
+        };
         me.default_sort();
         me
     }
@@ -184,10 +191,12 @@ impl RoutingGraph {
     }
 }
 
+/* This enum is currently being reused for both constraint requirements
+ * and constraint activators, but later it it might prove to be useful to 
+ * have two different enums for activators and requirements. */
 #[derive(PartialOrd, PartialEq, Ord, Eq, Clone, Debug, Serialize, Deserialize)]
 enum ConstrainingElement {
     Port(u32),
-    ClockSignalPolarity(u32),
 }
 
 struct PortToPortRouter<'g> {
@@ -200,6 +209,7 @@ struct PortToPortRouter<'g> {
 #[derive(Serialize, Deserialize)]
 struct PTPRMarker {
     constraints: DNFForm<ConstrainingElement>,
+    activated: DNFForm<ConstrainingElement>,
 }
 
 impl<'g> PortToPortRouter<'g> {
@@ -209,8 +219,8 @@ impl<'g> PortToPortRouter<'g> {
             from,
             markers: (0 .. graph.nodes.len()).map(|_| {
                 PTPRMarker {
-                    /* visited: 0, */
                     constraints: DNFForm::new(),
+                    activated: DNFForm::new(),
                 }
             }).collect(),
             queue: VecDeque::new(),
@@ -220,7 +230,8 @@ impl<'g> PortToPortRouter<'g> {
     fn routing_step(&mut self) -> Option<usize> {
         let (previous_node, current_node) = self.queue.pop_front()?;
 
-        self.scan_and_add_constraints(current_node, previous_node);
+        self.scan_and_add_constraint_requirements(current_node, previous_node);
+        self.scan_and_add_constraint_activators(current_node, previous_node);
         
         for next in self.graph.edges_from(current_node) {
             let is_subformular = {
@@ -231,8 +242,12 @@ impl<'g> PortToPortRouter<'g> {
             
             if !is_subformular {
                 let my_constr = self.markers[current_node].constraints.clone();
+                let my_activated = self.markers[current_node].activated.clone();
                 replace_with_or_abort(&mut self.markers[next].constraints, |c| {
                     c.disjunct(my_constr)
+                });
+                replace_with_or_abort(&mut self.markers[next].activated, |c| {
+                    c.disjunct(my_activated)
                 });
                 self.queue.push_back((Some(current_node), next));
             }
@@ -241,7 +256,11 @@ impl<'g> PortToPortRouter<'g> {
         Some(current_node)
     }
 
-    fn scan_and_add_constraints(&mut self, node: usize, previous: Option<usize>) {
+    fn scan_and_add_constraint_requirements(
+        &mut self,
+        node: usize, 
+        previous: Option<usize>
+    ) {
         if let Some(prev) = previous {
             /* Add constraints for no multiple drivers */
             for driver in self.graph.edges_to(node) {
@@ -264,16 +283,41 @@ impl<'g> PortToPortRouter<'g> {
         );
     }
 
-    fn init_constraints(&mut self, node: usize) {
+    fn scan_and_add_constraint_activators(
+        &mut self,
+        node: usize, 
+        previous: Option<usize>
+    ) {
+        if let Some(previous) = previous  {
+            let mut must_activate_driver = false;
+            for pnode in self.graph.edges_to(node) {
+                if pnode != previous {
+                    must_activate_driver = true;
+                    break;
+                }
+            }
+            if must_activate_driver {
+                replace_with_or_abort(&mut self.markers[node].activated, |a|
+                    a.conjunct_term_with_last(
+                        FormulaTerm::Var(ConstrainingElement::Port(previous as u32))
+                    )
+                );
+            }
+        }
+    }
+
+    fn init_constraints_and_activators(&mut self, node: usize) {
         self.markers[node].constraints = DNFForm::new()
-            .add_cube( DNFCube { terms: vec![FormulaTerm::True] })
+            .add_cube(DNFCube { terms: vec![FormulaTerm::True] });
+        self.markers[node].activated = DNFForm::new()
+            .add_cube(DNFCube::new());
     }
 
     fn route_all(mut self, mut step_counter: Option<&mut usize>) -> Vec<PTPRMarker> {
         #[cfg(debug_assertions)]
         if let Some(ref mut counter) = step_counter { **counter = 0 };
 
-        self.init_constraints(self.from);
+        self.init_constraints_and_activators(self.from);
 
         self.queue.clear();
         self.queue.push_back((None, self.from));
@@ -469,7 +513,7 @@ impl<'a> BruteRouter<'a> {
                 Self::route_pins(graph, from, Some(&mut step_counter), optimize);
             dbg_log!(DBG_INFO, "  Number of steps: {}", step_counter);
             for (to, routing_info) in routing_results.enumerate() {
-                if routing_info.route_constraints.len() != 0 {
+                if (routing_info.requires.len() != 0) || (routing_info.implies.len() != 0) {
                     pin_to_pin_map.insert((from, to), routing_info);
                 }
             }

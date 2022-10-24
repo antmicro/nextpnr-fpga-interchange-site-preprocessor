@@ -481,6 +481,9 @@ impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
     fn conjunct_term_with_last(mut self, term: FormulaTerm<Id>) -> Self {
         if let Some(cube) = self.cubes.last_mut() {
             cube.add_term(term);
+        } else {
+            /* TODO: Should return Result instead */
+            panic!("No last cube to conjunct with");
         }
         self
     }

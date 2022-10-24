@@ -27,5 +27,3 @@ pub mod common;
 pub mod ic_loader;
 pub mod logic_formula;
 pub mod site_brute_router;
-
-
