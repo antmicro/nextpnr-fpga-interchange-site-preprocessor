@@ -386,6 +386,34 @@ impl<'a> BruteRouter<'a> {
             }
         }
 
+        let graph = Self::create_routing_graph(
+            device,
+            tt,
+            &bels,
+            &bel_name_to_bel_idx,
+            &tile_belpin_idx
+        );
+
+        assert_eq!(tile_belpin_idx_to_bel_pin.len(), graph.nodes.len());
+
+        Self {
+            tt: tt.clone(),
+            bels,
+            pin_to_pin_map,
+            sinks,
+            tile_belpin_idx_to_bel_pin,
+            graph,
+        }
+    }
+
+    fn create_routing_graph(
+        device: &'a Device<'a>,
+        tt: &crate::ic_loader::archdef::TileTypeReader<'a>,
+        bels: &[BELInfo],
+        bel_name_to_bel_idx: &HashMap<(u32, u32), usize>,
+        tile_belpin_idx: &HashMap<(usize, usize), usize>)
+    -> RoutingGraph
+    {
         /* Create routing graph: conections between BELs */
         let mut graph = RoutingGraph::new(tile_belpin_idx.len());
         for (stitt_idx, stitt) in tt.get_site_types().unwrap().iter().enumerate() {
@@ -467,16 +495,7 @@ impl<'a> BruteRouter<'a> {
             }
         }
 
-        assert_eq!(tile_belpin_idx_to_bel_pin.len(), graph.nodes.len());
-
-        Self {
-            tt: tt.clone(),
-            bels,
-            pin_to_pin_map,
-            sinks,
-            tile_belpin_idx_to_bel_pin,
-            graph,
-        }
+        graph
     }
 
     fn route_pins(
