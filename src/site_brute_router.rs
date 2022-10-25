@@ -14,6 +14,7 @@
  */
 
 
+use core::panic;
 use std::collections::{HashMap, VecDeque};
 use crate::common::IcStr;
 use crate::logic_formula::*;
@@ -43,6 +44,26 @@ impl From<crate::ic_loader::LogicalNetlist_capnp::netlist::Direction> for PinDir
     }
 }
 
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+enum BELCategory {
+    /* We do not distinguish between Logic and Routing categories, because some 
+     * logic bels can also be route-throughs, and more precise routing information 
+     * can be deduced by examining site-pips (pseudo-pips). */
+    LogicOrRouting,
+    SitePort,
+}
+
+impl From<crate::ic_loader::DeviceResources_capnp::device::BELCategory> for BELCategory {
+    fn from(cat: crate::ic_loader::DeviceResources_capnp::device::BELCategory) -> Self {
+        use crate::ic_loader::DeviceResources_capnp::device::BELCategory::*;
+        match cat {
+            Logic => Self::LogicOrRouting,
+            Routing => Self::LogicOrRouting,
+            SitePort => Self::SitePort,
+        }
+    }
+}
+
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct BELPin {
     pub idx_in_site_type: u32,
@@ -53,6 +74,7 @@ pub struct BELPin {
 struct BELInfo {
     site_type_idx: u32, /* Site Type Idx IN TILE TYPE! */
     name: u32,
+    category: BELCategory,
     pins: Vec<BELPin>,
 }
 
@@ -103,6 +125,7 @@ fn gather_bels_in_tile_type<'a>(
                 .map(|reader| BELInfo {
                     site_type_idx: stitt_idx as u32,
                     name: reader.get_name(),
+                    category: reader.get_category().unwrap().into(),
                     pins: reader.get_pins().unwrap().into_iter()
                         .map(|pin_idx| {
                             let pin = st.get_bel_pins().unwrap().get(pin_idx);
@@ -121,9 +144,18 @@ fn gather_bels_in_tile_type<'a>(
 
 type RoutingGraphEdge = bool;
 
-#[derive(Clone, Default)]
-struct RoutingGraphNode {
-    bel: Option<usize>,            /* Edge routed through another BEL */
+#[derive(Clone)]
+enum RoutingGraphNode {
+    BelPort(usize),
+    RoutingBelPort(usize),
+    SitePort(usize),
+    FreePort, /* INVALID */
+}
+
+impl Default for RoutingGraphNode {
+    fn default() -> Self {
+        Self::FreePort
+    }
 }
 
 struct RoutingGraph {
@@ -422,6 +454,24 @@ impl<'a> BruteRouter<'a> {
                 .get_site_type_list().unwrap()
                 .get(site_type_idx);
             
+            /* Initialize BELs associated with nodes */
+            for (bel_idx, bel) in bels.iter().enumerate() {
+                for (pin_in_bel_idx, pin) in bel.pins.iter().enumerate() {
+                    let pin_idx = tile_belpin_idx[&(bel_idx, pin_in_bel_idx)];
+                    
+                    match bel.category {
+                        /* XXX: We will "upgrade" some of the bel ports to routing bel
+                         * ports later */
+                        BELCategory::LogicOrRouting =>
+                            *graph.get_node_mut(pin_idx) =
+                                RoutingGraphNode::BelPort(bel_idx),
+                        BELCategory::SitePort =>
+                            *graph.get_node_mut(pin_idx) =
+                                RoutingGraphNode::SitePort(bel_idx),
+                    }
+                }
+            }
+            
             for wire in site_type.reborrow().get_site_wires().unwrap() {
                 let mut drivers = Vec::new();
                 let mut sinks = Vec::new();
@@ -482,18 +532,42 @@ impl<'a> BruteRouter<'a> {
                 let tile_in_pin_idx = tile_belpin_idx[&(bel_idx, bel_in_pin_idx)];
                 let tile_out_pin_idx = tile_belpin_idx[&(bel_idx, bel_out_pin_idx)];
                 
-                match graph.get_node_mut(tile_in_pin_idx).bel {
-                    ref mut bopt @ None => *bopt = Some(bel_idx),
-                    Some(other_bel_idx) => assert!(other_bel_idx == bel_idx),
+                match graph.get_node_mut(tile_in_pin_idx) {
+                    node @ RoutingGraphNode::BelPort(_) => {
+                        *node = RoutingGraphNode::RoutingBelPort(bel_idx)
+                    },
+                    RoutingGraphNode::RoutingBelPort(node_bel_idx) =>
+                        assert_eq!(*node_bel_idx, bel_idx),
+                    RoutingGraphNode::SitePort(_) => 
+                        panic!("Site PIP includes site port {}", tile_in_pin_idx),
+                    RoutingGraphNode::FreePort =>
+                        panic!("Pin {} uninitialized", tile_in_pin_idx)
                 }
-                match graph.get_node_mut(tile_out_pin_idx).bel {
-                    ref mut bopt @ None => *bopt = Some(bel_idx),
-                    Some(other_bel_idx) => assert!(other_bel_idx == bel_idx),
+                match graph.get_node_mut(tile_out_pin_idx) {
+                    node @ RoutingGraphNode::BelPort(_) =>
+                        *node = RoutingGraphNode::RoutingBelPort(bel_idx),
+                    RoutingGraphNode::RoutingBelPort(node_bel_idx) =>
+                        assert_eq!(*node_bel_idx, bel_idx),
+                    RoutingGraphNode::SitePort(_) => 
+                        panic!("Site PIP includes site port {}", tile_in_pin_idx),
+                    RoutingGraphNode::FreePort =>
+                        panic!("Pin {} uninitialized", tile_in_pin_idx)
                 }
 
                 let _ = graph.connect(tile_in_pin_idx, tile_out_pin_idx);
             }
         }
+
+        /* Check that all nodes have been initialized. */
+        #[cfg(debug_assertions)]
+        assert!(
+            if let None = graph.nodes.iter().find(|n| {
+                match n {
+                    RoutingGraphNode::FreePort => true,
+                    _ => false,
+                }
+            }) { true } else { false }
+        );
 
         graph
     }
@@ -578,34 +652,50 @@ impl<'a> BruteRouter<'a> {
 
         /* Group pins of the same BELs into subgraphs */
         let st_list = device.reborrow().get_site_type_list().unwrap();
-        for (node_idx, _) in self.graph.nodes.iter().enumerate() {
-            let (bel_idx, _) = self.tile_belpin_idx_to_bel_pin[node_idx];
-            let stitt = self.bels[bel_idx].site_type_idx;
-            let bel_name = device.ic_str(self.bels[bel_idx].name).unwrap();
+        for (node_idx, node) in self.graph.nodes.iter().enumerate() {
+            let (bel_idx, bel_is_routing, bel_is_site_port) = match node {
+                RoutingGraphNode::BelPort(bel_idx) => (bel_idx, false, false),
+                RoutingGraphNode::RoutingBelPort(bel_idx) => (bel_idx, true, false),
+                RoutingGraphNode::SitePort(bel_idx) => (bel_idx, true, true),
+                RoutingGraphNode::FreePort => unreachable!(),
+            };
+            let stitt = self.bels[*bel_idx].site_type_idx;
+            let bel_name = device.ic_str(self.bels[*bel_idx].name).unwrap();
             let st_idx = self.tt.get_site_types().unwrap().get(stitt).get_primary_type();
             let st = st_list.get(st_idx);
             let st_name = device.ic_str(st.get_name()).unwrap();
 
             let bel_name = format!("{}_{}/{}", st_name, stitt, bel_name);
 
-            let bucket = bel_subgraphs.entry(bel_name).or_insert_with(|| Vec::new());
-            bucket.push(node_idx);
+            let bucket = bel_subgraphs.entry(bel_name)
+                .or_insert_with(|| BELSubGraph::default());
+            
+            if bel_is_site_port {
+                bucket.bel_category = BELSubGrapgBELCategory::SitePort;
+            } else if bel_is_routing {
+                bucket.bel_category = BELSubGrapgBELCategory::Routing;
+            }
+
+            bucket.pins.push(node_idx);
         }
         
         /* Write DOT */
         let mut dot = "# DOT Graph generated by NISP\n\n".to_string();
         dot += &format!("digraph {} {{\n\n", name);
 
-        for (bel_name, bel_pins) in bel_subgraphs {
+        for (bel_name, bel_subgraph) in bel_subgraphs {
             
 
             dot += &format!("    subgraph cluster_{} {{\n", bel_name.replace('/', "__"));
             dot += &format!("        node [style=filled];\n");
             dot += &format!("        label = \"{}\";\n", bel_name);
-            dot += &format!("        color = \"blue\";\n");
+            dot += &format!(
+                "        color = \"{}\";\n",
+                bel_subgraph.bel_category.get_color_str()
+            );
 
-            for pin_idx in bel_pins {
-                let (bel_idx, bel_pin_idx) = self.tile_belpin_idx_to_bel_pin[pin_idx];
+            for pin_idx in &bel_subgraph.pins {
+                let (bel_idx, bel_pin_idx) = self.tile_belpin_idx_to_bel_pin[*pin_idx];
                 let bel = &self.bels[bel_idx];
                 
                 let pin_name = device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
@@ -628,6 +718,36 @@ impl<'a> BruteRouter<'a> {
         dot += "}\n";
 
         dot
+    }
+}
+
+enum BELSubGrapgBELCategory {
+    NoRouting,
+    Routing,
+    SitePort,
+}
+
+impl BELSubGrapgBELCategory {
+    fn get_color_str(&self) -> &'static str {
+        match self {
+            Self::NoRouting => "blue",
+            Self::Routing => "purple",
+            Self::SitePort => "green"
+        }
+    }
+}
+
+struct BELSubGraph {
+    bel_category: BELSubGrapgBELCategory,
+    pins: Vec<usize>,
+}
+
+impl Default for BELSubGraph {
+    fn default() -> Self {
+        Self {
+            bel_category: BELSubGrapgBELCategory::NoRouting,
+            pins: Vec::new(),
+        }
     }
 }
 
