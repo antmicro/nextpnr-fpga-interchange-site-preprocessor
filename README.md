@@ -31,6 +31,11 @@ NISP has the following features at the  moment
 
 1. Install [Rust](https://www.rust-lang.org/)
 2. Clone [fpga-interchange-schema](https://github.com/chipsalliance/fpga-interchange-schema)
+   (NOTE: To use that schema you need a schema header from
+   [Java cap'n proto bindings](https://github.com/capnproto/capnproto-java/tree/81d18463a8f3c98f6d21d4eae27caaca6bace4f7).
+   Either install the bindings or, just copy the header located at
+   `compiler/src/main/schema/capnp/java.capnp` to your capn' proto include directory, which
+   is presumably `/usr/include/capnp/java.capnp` if you are running Linux.)
 
 ### Compiling
 
