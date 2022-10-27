@@ -56,8 +56,10 @@ nisp [OPTIONS] <DEVICE> <BBA>
 Descriptions for currently available options are available when running the program with
 `--help` flag.
 
-If an option requires you to specify a list of tiles, you can use `:all` as a replacement
-for listing all tiles in the architecture.
+If an option requires you to specify a list of tile type names, you can use `:all` as a
+replacement for listing all tiles in the architecture. To list select entries you can repeat
+the falg multiple times (eq. `--json CLEM --json CLEL`). Keep in mind that NISP won't create
+any prefix directories you specify on its own.
 
 ### `test` script
 This script can be used to simplify compiling, running and debugging NISP.
