@@ -17,7 +17,7 @@ fn compile_capnp(path: &Path, prefix: &Path) {
 
 fn main() {
     let schema_path = env::var("FPGA_INTERCHANGE_SCHEMA_DIR")
-        .unwrap_or("fpga-interchange-schema".to_string());
+        .unwrap_or("third_party/fpga-interchange-schema".to_string());
     let schema_path = Path::new(&schema_path);
 
     println!("fpga-interchange schema directory: {}", schema_path.to_str().unwrap());
