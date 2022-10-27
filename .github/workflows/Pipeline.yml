@@ -47,6 +47,12 @@ jobs:
       with:
         submodules: recursive
     
+    - name: Install dependencies
+      run: |
+        sudo apt -qqy update
+        sudo apt -y install wget gzip capnproto libcapnp-dev
+        sudo cp ./third_party/capnproto-java/compiler/src/main/schema/capnp/java.capnp /usr/include/capnp/java.capnp
+    
     - name: Install Rust
       uses: actions-rs/toolchain@v1
       with:
@@ -81,6 +87,12 @@ jobs:
       with:
         submodules: recursive
     
+    - name: Install dependencies
+      run: |
+        sudo apt -qqy update
+        sudo apt -y install wget gzip capnproto libcapnp-dev
+        sudo cp ./third_party/capnproto-java/compiler/src/main/schema/capnp/java.capnp /usr/include/capnp/java.capnp
+    
     - name: Install Rust
       uses: actions-rs/toolchain@v1
       with:
@@ -110,13 +122,13 @@ jobs:
     steps:
     - name: Install dependencies (release)
       run: |
-        apt -qqy update
-        apt -y install wget
+        sudo apt -qqy update
+        sudo apt -y install wget
     
     - name: Install dependencies (debug)
       run: |
-        apt -qqy update
-        apt -y install wget gzip
+        sudo apt -qqy update
+        sudo apt -y install wget gzip
     
     - name: Download build
       uses: actions/download-artifact@v2
