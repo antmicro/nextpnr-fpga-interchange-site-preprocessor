@@ -33,7 +33,6 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: true
       matrix:
         build_type:
         - debug
@@ -75,9 +74,6 @@ jobs:
   
   Unit-Tests:
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: true
     
     name: Unit tests
     
@@ -108,14 +104,14 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         build_type:
         - debug
         - release
         device:
         - xczu7ev
-        - xc7a50t
+        - xc7a35t
     
     name: Test run (${{ matrix.build_type }} | ${{ matrix.device }})
 
