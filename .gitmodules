@@ -1,0 +1,6 @@
+[submodule "third_party/fpga-interchange-schema"]
+	path = third_party/fpga-interchange-schema
+	url = https://github.com/chipsalliance/fpga-interchange-schema.git
+[submodule "third_party/capnproto-java"]
+	path = third_party/capnproto-java
+	url = https://github.com/capnproto/capnproto-java.git
