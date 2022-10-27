@@ -128,7 +128,7 @@ jobs:
     - name: Install dependencies (debug)
       run: |
         sudo apt -qqy update
-        sudo apt -y install wget gzip
+        sudo apt -y install wget gzip tar
     
     - name: Download build
       uses: actions/download-artifact@v2
@@ -138,19 +138,21 @@ jobs:
     - name: Get device file
       run: |
         mkdir downloads
-        wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-${{ matrix.device }}-35e0d7e.tar.xz -O downloads/${{ matrix.device }}.device
+        wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-${{ matrix.device }}-35e0d7e.tar.xz -O downloads/${{ matrix.device }}.tar.xz
+        tar -xvf downloads/${{ matrix.device }}.tar.xz ${{ matrix.device }}/${{ matrix.device }}.device
+        rm downloads/${{ matrix.device }}.tar.xz
     
     - name: Decompress device file
-      run: gzip -d -c downloads/${{ matrix.device }}.device > ${{ matrix.device }}.device.raw
+      run: gzip -d -c ${{ matrix.device }}/${{ matrix.device }}.device > ${{ matrix.device }}/${{ matrix.device }}.device.raw
     
     - name: Full run (debug)
       run: |
         mkdir jsons
         mkdir dots
-        ./nisp-${{ matrix.build_type }}/nisp ${{ matrix.device }}.device.raw ${{ matrix.device }}_nisp.bba --raw --threads `nproc` --json-prefix jsons --json :all --dot-prefix --dot :all
+        ./nisp-${{ matrix.build_type }}/nisp ${{ matrix.device }}/${{ matrix.device }}.device.raw ${{ matrix.device }}_nisp.bba --raw --threads `nproc` --json-prefix jsons --json :all --dot-prefix --dot :all
 
     - name: Full run (release)
       run: |
         mkdir jsons
         mkdir dots
-        ./nisp-${{ matrix.build_type }}/nisp downloads/${{ matrix.device }}.device ${{ matrix.device }}_nisp.bba --threads `nproc` --json-prefix jsons --json :all --dot-prefix --dot :all
+        ./nisp-${{ matrix.build_type }}/nisp ${{ matrix.device }}/${{ matrix.device }}.device ${{ matrix.device }}_nisp.bba --threads `nproc` --json-prefix jsons --json :all --dot-prefix --dot :all
