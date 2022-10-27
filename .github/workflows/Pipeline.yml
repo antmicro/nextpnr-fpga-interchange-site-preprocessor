@@ -142,13 +142,17 @@ jobs:
       run: gzip -d -c ${{ matrix.device }}/${{ matrix.device }}.device > ${{ matrix.device }}/${{ matrix.device }}.device.raw
     
     - name: Full run (debug)
+      if: matrix.build_type == 'debug'
       run: |
         mkdir jsons
         mkdir dots
-        ./nisp-${{ matrix.build_type }}/nisp ${{ matrix.device }}/${{ matrix.device }}.device.raw ${{ matrix.device }}_nisp.bba --raw --threads `nproc` --json-prefix jsons --json :all --dot-prefix --dot :all
+        chmod +x nisp
+        ./nisp ${{ matrix.device }}/${{ matrix.device }}.device.raw ${{ matrix.device }}_nisp.bba --raw --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
 
     - name: Full run (release)
+      if: matrix.build_type == 'release'
       run: |
         mkdir jsons
         mkdir dots
-        ./nisp-${{ matrix.build_type }}/nisp ${{ matrix.device }}/${{ matrix.device }}.device ${{ matrix.device }}_nisp.bba --threads `nproc` --json-prefix jsons --json :all --dot-prefix --dot :all
+        chmod +x nisp
+        ./nisp ${{ matrix.device }}/${{ matrix.device }}.device ${{ matrix.device }}_nisp.bba --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
