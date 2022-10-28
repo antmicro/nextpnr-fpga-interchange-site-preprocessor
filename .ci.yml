@@ -1,0 +1,138 @@
+# Copyright (C) 2022 Antmicro
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+image: $DOCKER_IMAGE
+
+stages:
+- build_and_unit_test
+- test_run
+
+.install-build-deps: &install-build-deps
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+  before_script:
+  - export DEBIAN_FRONTEND=noninteractive
+  - apt -qqy update
+  - apt -y install wget gzip capnproto libcapnp-dev curl build-essential
+  - cp ./third_party/capnproto-java/compiler/src/main/schema/capnp/java.capnp /usr/include/capnp/java.capnp
+  - curl https://sh.rustup.rs -sSf | sh -s -- -y
+  - source $HOME/.cargo/env
+
+build_debug:
+  stage: build_and_unit_test
+  <<: *install-build-deps
+  script:
+  - cargo build
+  artifacts:
+    paths: [target/debug/nisp]
+
+build_release:
+  stage: build_and_unit_test
+  <<: *install-build-deps
+  script:
+  - cargo build --release
+  artifacts:
+    paths: [target/release/nisp]
+
+unit_test:
+  stage: build_and_unit_test
+  <<: *install-build-deps
+  script:
+  - cargo test
+
+.test-run-devices: &test-run-devices
+- xczu7ev
+- xc7a35t
+
+# This is broken in Gitlab
+# See https://gitlab.com/gitlab-org/gitlab-foss/-/issues/24235
+
+# .download-device-file: &download-device-file
+# - apt install -y wget
+# - mkdir downloads
+# - wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-$DEVICE-35e0d7e.tar.xz -O downloads/$DEVICE.tar.xz
+# - tar -xvf downloads/$DEVICE.tar.xz $DEVICE/$DEVICE.device
+# - rm downloads/$DEVICE.tar.xz
+# 
+# .raw-device-file: &raw-device-file
+# - gzip -d -c $DEVICE/$DEVICE.device > $DEVICE/$DEVICE.device.raw
+# 
+# .prepare-nisp-output-dirs: &prepare-nisp-output-dirs
+# - mkdir jsons
+# - mkdir dots
+
+.nisp-artifacts: &nisp-artifacts
+- jsons/*.json
+- dots/*.dot
+
+.debug-run: &debug-run
+  stage: test_run
+  before_script:
+  - export DEBIAN_FRONTEND=noninteractive
+  - apt -qqy update
+  - apt install -y wget xz-utils
+  - mkdir downloads
+  - wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-$DEVICE-35e0d7e.tar.xz -O downloads/$DEVICE.tar.xz
+  - tar -xvf downloads/${DEVICE}.tar.xz ${DEVICE}/${DEVICE}.device
+  - rm downloads/${DEVICE}.tar.xz
+
+  - gzip -d -c ${DEVICE}/${DEVICE}.device > ${DEVICE}/${DEVICE}.device.raw
+  
+  - mkdir jsons
+  - mkdir dots
+
+  script:
+  - ./target/debug/nisp ${DEVICE}/${DEVICE}.device.raw ${DEVICE}_nisp.bba --raw --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
+  artifacts:
+    paths: *nisp-artifacts
+
+.release-run: &release-run
+  stage: test_run
+  before_script:
+  - export DEBIAN_FRONTEND=noninteractive
+  - apt -qqy update
+  - apt install -y wget xz-utils
+  - mkdir downloads
+  - wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-$DEVICE-35e0d7e.tar.xz -O downloads/$DEVICE.tar.xz
+  - tar -xvf downloads/${DEVICE}.tar.xz ${DEVICE}/${DEVICE}.device
+  - rm downloads/${DEVICE}.tar.xz
+
+  - mkdir jsons
+  - mkdir dots
+  script:
+  - ./target/release/nisp ${DEVICE}/${DEVICE}.device ${DEVICE}_nisp.bba --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
+  artifacts:
+    paths: *nisp-artifacts
+
+# TEST RUNS ----------------------------------------------
+
+test_run_debug_xc7a35t:
+  variables: { DEVICE: xc7a35t }
+  <<: *debug-run
+
+test_run_release_xc7a35t:
+  variables: { DEVICE: xc7a35t }
+  <<: *release-run
+
+test_run_debug_xczu7ev:
+  variables: { DEVICE: xczu7ev }
+  <<: *debug-run
+
+test_run_release_xczu7ev:
+  variables: { DEVICE: xczu7ev }
+  <<: *release-run
+
+
