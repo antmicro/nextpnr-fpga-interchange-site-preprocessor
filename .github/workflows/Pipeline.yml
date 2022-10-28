@@ -97,21 +97,33 @@ jobs:
     
     - name: Test
       run: cargo test
+  
+  generate_matrix:
+    runs-on: ubuntu-latest
 
-  Test-run:
-    needs: [Build]
+    name: Generate Matrix
+
+    outputs:
+      matrix: ${{ steps.matrix_gen.outputs.matrix }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - id: matrix_gen
+        name: Generate Matrix
+        run: |
+          python3 ./ci/generate_matrix.py github
+          cat $GITHUB_OUTPUT
+
+  Test-Run:
+    needs: [Build, generate_matrix]
 
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
-      matrix:
-        build_type:
-        - debug
-        - release
-        device:
-        - xczu7ev
-        - xc7a35t
+      matrix: ${{ fromJson(needs.generate_matrix.outputs.matrix) }}
     
     name: Test run (${{ matrix.build_type }} | ${{ matrix.device }})
 

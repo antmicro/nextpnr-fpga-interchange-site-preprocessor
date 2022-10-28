@@ -34,7 +34,16 @@ from argparse import ArgumentParser
 import os
 import json
 
-def generate_configs():
+def generate_github_matrix():
+    github_env_file = os.environ['GITHUB_OUTPUT']
+    json_data = json.dumps({
+        'build_type': build_types,
+        'device': devices,
+    })
+    with open(github_env_file, 'a', encoding='utf-8') as f:
+        f.write(f'matrix={json_data}\n')
+
+def generate_gitlab_matrix():
     configs = []
     for build_type in build_types:
         for device in devices:
@@ -42,16 +51,7 @@ def generate_configs():
                 'build_type': build_type,
                 'device': device,
             })
-    return configs
-
-def generate_github_matrix():
-    configs = generate_configs()
-    github_env_file = os.environ['GITHUB_ENV']
-    with open(github_env_file, 'a') as f:
-        f.write(f'matrix={json.dumps(configs)}')
-
-def generate_gitlab_matrix():
-    configs = generate_configs()
+    
     gitlab_matrix_path = os.environ['GITLAB_MATRIX_PATH']
     assert(gitlab_matrix_path is not None)
     with open(gitlab_matrix_path, 'w') as f:
@@ -66,6 +66,8 @@ def main():
         generate_github_matrix()
     elif args.mode == 'gitlab':
         generate_gitlab_matrix()
+    else:
+        raise RuntimeError('Incorrect invocation')
 
 if __name__ == '__main__':
     main()
