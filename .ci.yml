@@ -18,7 +18,11 @@ image: $DOCKER_IMAGE
 
 stages:
 - build_and_unit_test
+- create_matrix
 - test_run
+
+variables:
+  GITLAB_MATRIX_PATH: matrix-gitlab.json
 
 .install-build-deps: &install-build-deps
   variables:
@@ -57,82 +61,55 @@ unit_test:
 - xczu7ev
 - xc7a35t
 
-# This is broken in Gitlab
-# See https://gitlab.com/gitlab-org/gitlab-foss/-/issues/24235
-
-# .download-device-file: &download-device-file
-# - apt install -y wget
-# - mkdir downloads
-# - wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-$DEVICE-35e0d7e.tar.xz -O downloads/$DEVICE.tar.xz
-# - tar -xvf downloads/$DEVICE.tar.xz $DEVICE/$DEVICE.device
-# - rm downloads/$DEVICE.tar.xz
-# 
-# .raw-device-file: &raw-device-file
-# - gzip -d -c $DEVICE/$DEVICE.device > $DEVICE/$DEVICE.device.raw
-# 
-# .prepare-nisp-output-dirs: &prepare-nisp-output-dirs
-# - mkdir jsons
-# - mkdir dots
-
 .nisp-artifacts: &nisp-artifacts
 - jsons/*.json
 - dots/*.dot
 
-.debug-run: &debug-run
-  stage: test_run
+create_matrix:
+  stage: create_matrix
   before_script:
   - export DEBIAN_FRONTEND=noninteractive
   - apt -qqy update
-  - apt install -y wget xz-utils
+  - apt install -y python3
+  script:
+  - python3 ci/generate_matrix.py gitlab
+  artifacts:
+    paths: [$GITLAB_MATRIX_PATH]
+
+test_run:
+  stage: test_run
+  parallel: 4
+  before_script:
+  - export DEBIAN_FRONTEND=noninteractive
+  - apt -qqy update
+  - apt install -y wget xz-utils python3
+  
+  - export BUILD_TYPE=`python3 ci/gitlab_get_matrix_config.py ${CI_NODE_INDEX} build_type`
+  - export DEVICE=`python3 ci/gitlab_get_matrix_config.py ${CI_NODE_INDEX} device`
+
   - mkdir downloads
   - wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-$DEVICE-35e0d7e.tar.xz -O downloads/$DEVICE.tar.xz
   - tar -xvf downloads/${DEVICE}.tar.xz ${DEVICE}/${DEVICE}.device
   - rm downloads/${DEVICE}.tar.xz
 
-  - gzip -d -c ${DEVICE}/${DEVICE}.device > ${DEVICE}/${DEVICE}.device.raw
+  - |
+    if [[ "$BUILD_TYPE" == "debug" ]]; then
+      gzip -d -c ${DEVICE}/${DEVICE}.device > ${DEVICE}/${DEVICE}.device.raw
+    fi
   
   - mkdir jsons
   - mkdir dots
 
   script:
-  - ./target/debug/nisp ${DEVICE}/${DEVICE}.device.raw ${DEVICE}_nisp.bba --raw --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
+  - export BUILD_TYPE=`python3 ci/gitlab_get_matrix_config.py ${CI_NODE_INDEX} build_type`
+  - export DEVICE=`python3 ci/gitlab_get_matrix_config.py ${CI_NODE_INDEX} device`
+  - echo "Running NISP in ${BUILD_TYPE} mode for ${DEVICE} device."
+  - |
+    if [[ "$BUILD_TYPE" == "debug" ]]; then
+        ./target/debug/nisp ${DEVICE}/${DEVICE}.device.raw ${DEVICE}_nisp.bba --raw --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
+    elif [[ "$BUILD_TYPE" == "release" ]]; then
+        ./target/release/nisp ${DEVICE}/${DEVICE}.device ${DEVICE}_nisp.bba --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
+    fi
+  
   artifacts:
     paths: *nisp-artifacts
-
-.release-run: &release-run
-  stage: test_run
-  before_script:
-  - export DEBIAN_FRONTEND=noninteractive
-  - apt -qqy update
-  - apt install -y wget xz-utils
-  - mkdir downloads
-  - wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-$DEVICE-35e0d7e.tar.xz -O downloads/$DEVICE.tar.xz
-  - tar -xvf downloads/${DEVICE}.tar.xz ${DEVICE}/${DEVICE}.device
-  - rm downloads/${DEVICE}.tar.xz
-
-  - mkdir jsons
-  - mkdir dots
-  script:
-  - ./target/release/nisp ${DEVICE}/${DEVICE}.device ${DEVICE}_nisp.bba --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
-  artifacts:
-    paths: *nisp-artifacts
-
-# TEST RUNS ----------------------------------------------
-
-test_run_debug_xc7a35t:
-  variables: { DEVICE: xc7a35t }
-  <<: *debug-run
-
-test_run_release_xc7a35t:
-  variables: { DEVICE: xc7a35t }
-  <<: *release-run
-
-test_run_debug_xczu7ev:
-  variables: { DEVICE: xczu7ev }
-  <<: *debug-run
-
-test_run_release_xczu7ev:
-  variables: { DEVICE: xczu7ev }
-  <<: *release-run
-
-
