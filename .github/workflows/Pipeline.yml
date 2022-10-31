@@ -42,7 +42,7 @@ jobs:
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         submodules: recursive
     
@@ -67,7 +67,7 @@ jobs:
       run: cargo build --release
 
     - name: Upload build
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: nisp-${{ matrix.build_type }}
         path: target/${{ matrix.build_type }}/nisp
@@ -79,7 +79,7 @@ jobs:
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         submodules: recursive
     
@@ -108,7 +108,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - id: matrix_gen
         name: Generate Matrix
@@ -139,7 +139,7 @@ jobs:
         sudo apt -y install wget gzip tar
     
     - name: Download build
-      uses: actions/download-artifact@v2
+      uses: actions/download-artifact@v3
       with:
         name: nisp-${{ matrix.build_type }}
 
