@@ -366,8 +366,6 @@ pub struct BruteRouter<'a> {
     tt: crate::ic_loader::archdef::TileTypeReader<'a>,
     bels: Vec<BELInfo>,
     tile_belpin_idx_to_bel_pin: Vec<(usize, usize)>,
-    pub pin_to_pin_map: HashMap<BELPin, HashMap<BELPin, RoutingInfo>>,
-    pub sinks: Vec<BELPin>,
     graph: RoutingGraph,
 }
 
@@ -380,8 +378,6 @@ impl<'a> BruteRouter<'a> {
         /* Create mappings between elements and indices */
         let bels = gather_bels_in_tile_type(&device, &tt);
 
-        let pin_to_pin_map = HashMap::new();
-        let sinks = Vec::new();
         let mut bel_name_to_bel_idx = HashMap::new();
         let mut tile_belpin_idx = HashMap::new();
         let mut tile_belpin_idx_to_bel_pin = Vec::new();
@@ -431,8 +427,6 @@ impl<'a> BruteRouter<'a> {
         Self {
             tt: tt.clone(),
             bels,
-            pin_to_pin_map,
-            sinks,
             tile_belpin_idx_to_bel_pin,
             graph,
         }
@@ -456,7 +450,7 @@ impl<'a> BruteRouter<'a> {
             
             /* Initialize BELs associated with nodes */
             for (bel_idx, bel) in bels.iter().enumerate() {
-                for (pin_in_bel_idx, pin) in bel.pins.iter().enumerate() {
+                for (pin_in_bel_idx, _) in bel.pins.iter().enumerate() {
                     let pin_idx = tile_belpin_idx[&(bel_idx, pin_in_bel_idx)];
                     
                     match bel.category {
