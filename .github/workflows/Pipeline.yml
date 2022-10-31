@@ -53,10 +53,9 @@ jobs:
         sudo cp ./third_party/capnproto-java/compiler/src/main/schema/capnp/java.capnp /usr/include/capnp/java.capnp
     
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-          toolchain: stable
-          override: true
+      run: |
+        curl https://sh.rustup.rs -sSf | sh -s -- -y
+        source $HOME/.cargo/env
     
     - name: Build (debug)
       if: matrix.build_type == 'debug'
@@ -90,10 +89,9 @@ jobs:
         sudo cp ./third_party/capnproto-java/compiler/src/main/schema/capnp/java.capnp /usr/include/capnp/java.capnp
     
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-          toolchain: stable
-          override: true
+      run: |
+        curl https://sh.rustup.rs -sSf | sh -s -- -y
+        source $HOME/.cargo/env
     
     - name: Test
       run: cargo test
