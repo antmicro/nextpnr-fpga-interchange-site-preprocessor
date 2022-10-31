@@ -78,7 +78,7 @@ create_matrix:
 
 test_run:
   stage: test_run
-  parallel: 4 # build-type count * device count
+  parallel: 6 # build-type count * device count
   before_script:
   - export DEBIAN_FRONTEND=noninteractive
   - apt -qqy update

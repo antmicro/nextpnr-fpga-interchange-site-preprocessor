@@ -6,6 +6,7 @@
 
     "device": [
         "xczu7ev",
-        "xc7a35t"
+        "xc7a35t",
+        "LIFCL-40"
     ]
 }
