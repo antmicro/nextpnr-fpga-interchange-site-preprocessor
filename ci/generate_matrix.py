@@ -16,37 +16,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# -- Config --------------------------------------------------------
-
-build_types = [
-    'debug',
-    'release'
-]
-
-devices = [
-    'xc7a35t',
-    'xczu7ev'
-]
-
-# -----------------------------------------------------------------
-
 from argparse import ArgumentParser
 import os
 import json
 
-def generate_github_matrix():
+def generate_github_matrix(config):
     github_env_file = os.environ['GITHUB_OUTPUT']
-    json_data = json.dumps({
-        'build_type': build_types,
-        'device': devices,
-    })
     with open(github_env_file, 'a', encoding='utf-8') as f:
-        f.write(f'matrix={json_data}\n')
+        f.write(f'matrix={json.dumps(config)}\n')
 
-def generate_gitlab_matrix():
+def generate_gitlab_matrix(config):
     configs = []
-    for build_type in build_types:
-        for device in devices:
+    for build_type in config['build_types']:
+        for device in config['devices']:
             configs.append({
                 'build_type': build_type,
                 'device': device,
@@ -60,12 +42,16 @@ def generate_gitlab_matrix():
 def main():
     parser = ArgumentParser()
     parser.add_argument('mode', choices=['github', 'gitlab'])
+    parser.add_argument('config_path', type=str)
     args = parser.parse_args()
 
+    with open(args.config_path, 'r') as f:
+        config = json.loads(f.read())
+
     if args.mode == 'github':
-        generate_github_matrix()
+        generate_github_matrix(config)
     elif args.mode == 'gitlab':
-        generate_gitlab_matrix()
+        generate_gitlab_matrix(config)
     else:
         raise RuntimeError('Incorrect invocation')
 

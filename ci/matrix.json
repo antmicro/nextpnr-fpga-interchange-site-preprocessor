@@ -1,0 +1,11 @@
+{
+    "build_type": [
+        "debug",
+        "release"
+    ],
+
+    "device": [
+        "xczu7ev",
+        "xc7a35t"
+    ]
+}

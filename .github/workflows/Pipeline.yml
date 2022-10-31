@@ -111,7 +111,7 @@ jobs:
       - id: matrix_gen
         name: Generate Matrix
         run: |
-          python3 ./ci/generate_matrix.py github
+          python3 ./ci/generate_matrix.py github ci/matrix.json
           cat $GITHUB_OUTPUT
 
   Test-Run:
