@@ -27,8 +27,8 @@ def generate_github_matrix(config):
 
 def generate_gitlab_matrix(config):
     configs = []
-    for build_type in config['build_types']:
-        for device in config['devices']:
+    for build_type in config['build_type']:
+        for device in config['device']:
             configs.append({
                 'build_type': build_type,
                 'device': device,

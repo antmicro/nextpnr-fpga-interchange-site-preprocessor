@@ -126,12 +126,17 @@ jobs:
     name: Test run (${{ matrix.build_type }} | ${{ matrix.device }})
 
     steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
     - name: Install dependencies (release)
+      if: matrix.build_type == 'release'
       run: |
         sudo apt -qqy update
         sudo apt -y install wget
     
     - name: Install dependencies (debug)
+      if: matrix.build_type == 'debug'
       run: |
         sudo apt -qqy update
         sudo apt -y install wget gzip tar
@@ -142,27 +147,13 @@ jobs:
         name: nisp-${{ matrix.build_type }}
 
     - name: Get device file
-      run: |
-        mkdir downloads
-        wget https://storage.googleapis.com/fpga-interchange-tests/artifacts/prod/foss-fpga-tools/fpga-interchange-tests/continuous/install/20221027-095221/interchange-${{ matrix.device }}-35e0d7e.tar.xz -O downloads/${{ matrix.device }}.tar.xz
-        tar -xvf downloads/${{ matrix.device }}.tar.xz ${{ matrix.device }}/${{ matrix.device }}.device
-        rm downloads/${{ matrix.device }}.tar.xz
+      run: bash ci/download_device.sh ${{ matrix.device }}
     
     - name: Decompress device file
+      if: matrix.build_type == 'debug'
       run: gzip -d -c ${{ matrix.device }}/${{ matrix.device }}.device > ${{ matrix.device }}/${{ matrix.device }}.device.raw
     
-    - name: Full run (debug)
-      if: matrix.build_type == 'debug'
+    - name: Full run
       run: |
-        mkdir jsons
-        mkdir dots
-        chmod +x nisp
-        ./nisp ${{ matrix.device }}/${{ matrix.device }}.device.raw ${{ matrix.device }}_nisp.bba --raw --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
-
-    - name: Full run (release)
-      if: matrix.build_type == 'release'
-      run: |
-        mkdir jsons
-        mkdir dots
-        chmod +x nisp
-        ./nisp ${{ matrix.device }}/${{ matrix.device }}.device ${{ matrix.device }}_nisp.bba --threads `nproc` --json-prefix jsons --json :all --dot-prefix dots --dot :all
+        chmod +x ./nisp
+        bash ci/full_run.sh ${{ matrix.build_type }} ${{ matrix.device }}
