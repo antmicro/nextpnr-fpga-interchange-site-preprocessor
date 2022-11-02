@@ -604,6 +604,9 @@ impl<'a> BruteRouter<'a> {
 
         let mut pin_to_pin_map = HashMap::new();
         for from in range {
+            if let PinDir::Input = graph.get_node(from).dir {
+                continue; /* We don't need routing information for input pins */
+            }
             dbg_log!(DBG_INFO, "Routing from pin {}/{}", from, pin_cnt);
             let mut step_counter = 0;
             let routing_results =
