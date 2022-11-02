@@ -145,7 +145,13 @@ fn gather_bels_in_tile_type<'a>(
 type RoutingGraphEdge = bool;
 
 #[derive(Clone)]
-enum RoutingGraphNode {
+struct RoutingGraphNode {
+    kind: RoutingGraphNodeKind,
+    dir: PinDir,
+}
+
+#[derive(Clone)]
+enum RoutingGraphNodeKind {
     BelPort(usize),
     RoutingBelPort(usize),
     SitePort(usize),
@@ -154,7 +160,10 @@ enum RoutingGraphNode {
 
 impl Default for RoutingGraphNode {
     fn default() -> Self {
-        Self::FreePort
+        Self {
+            kind: RoutingGraphNodeKind::FreePort,
+            dir: PinDir::Inout,
+        }
     }
 }
 
@@ -452,16 +461,17 @@ impl<'a> BruteRouter<'a> {
             for (bel_idx, bel) in bels.iter().enumerate() {
                 for (pin_in_bel_idx, _) in bel.pins.iter().enumerate() {
                     let pin_idx = tile_belpin_idx[&(bel_idx, pin_in_bel_idx)];
+                    graph.get_node_mut(pin_idx).dir = bel.pins[pin_in_bel_idx].dir;
                     
                     match bel.category {
                         /* XXX: We will "upgrade" some of the bel ports to routing bel
                          * ports later */
                         BELCategory::LogicOrRouting =>
-                            *graph.get_node_mut(pin_idx) =
-                                RoutingGraphNode::BelPort(bel_idx),
+                            graph.get_node_mut(pin_idx).kind =
+                                RoutingGraphNodeKind::BelPort(bel_idx),
                         BELCategory::SitePort =>
-                            *graph.get_node_mut(pin_idx) =
-                                RoutingGraphNode::SitePort(bel_idx),
+                            graph.get_node_mut(pin_idx).kind =
+                                RoutingGraphNodeKind::SitePort(bel_idx),
                     }
                 }
             }
@@ -526,25 +536,25 @@ impl<'a> BruteRouter<'a> {
                 let tile_in_pin_idx = tile_belpin_idx[&(bel_idx, bel_in_pin_idx)];
                 let tile_out_pin_idx = tile_belpin_idx[&(bel_idx, bel_out_pin_idx)];
                 
-                match graph.get_node_mut(tile_in_pin_idx) {
-                    node @ RoutingGraphNode::BelPort(_) => {
-                        *node = RoutingGraphNode::RoutingBelPort(bel_idx)
+                match graph.get_node_mut(tile_in_pin_idx).kind {
+                    ref mut kind @ RoutingGraphNodeKind::BelPort(_) => {
+                        *kind = RoutingGraphNodeKind::RoutingBelPort(bel_idx)
                     },
-                    RoutingGraphNode::RoutingBelPort(node_bel_idx) =>
-                        assert_eq!(*node_bel_idx, bel_idx),
-                    RoutingGraphNode::SitePort(_) => 
+                    RoutingGraphNodeKind::RoutingBelPort(node_bel_idx) =>
+                        assert_eq!(node_bel_idx, bel_idx),
+                    RoutingGraphNodeKind::SitePort(_) => 
                         panic!("Site PIP includes site port {}", tile_in_pin_idx),
-                    RoutingGraphNode::FreePort =>
+                    RoutingGraphNodeKind::FreePort =>
                         panic!("Pin {} uninitialized", tile_in_pin_idx)
                 }
-                match graph.get_node_mut(tile_out_pin_idx) {
-                    node @ RoutingGraphNode::BelPort(_) =>
-                        *node = RoutingGraphNode::RoutingBelPort(bel_idx),
-                    RoutingGraphNode::RoutingBelPort(node_bel_idx) =>
-                        assert_eq!(*node_bel_idx, bel_idx),
-                    RoutingGraphNode::SitePort(_) => 
+                match graph.get_node_mut(tile_out_pin_idx).kind {
+                    ref mut kind @ RoutingGraphNodeKind::BelPort(_) =>
+                        *kind = RoutingGraphNodeKind::RoutingBelPort(bel_idx),
+                    RoutingGraphNodeKind::RoutingBelPort(node_bel_idx) =>
+                        assert_eq!(node_bel_idx, bel_idx),
+                    RoutingGraphNodeKind::SitePort(_) => 
                         panic!("Site PIP includes site port {}", tile_in_pin_idx),
-                    RoutingGraphNode::FreePort =>
+                    RoutingGraphNodeKind::FreePort =>
                         panic!("Pin {} uninitialized", tile_in_pin_idx)
                 }
 
@@ -556,8 +566,8 @@ impl<'a> BruteRouter<'a> {
         #[cfg(debug_assertions)]
         assert!(
             if let None = graph.nodes.iter().find(|n| {
-                match n {
-                    RoutingGraphNode::FreePort => true,
+                match n.kind {
+                    RoutingGraphNodeKind::FreePort => true,
                     _ => false,
                 }
             }) { true } else { false }
@@ -647,14 +657,14 @@ impl<'a> BruteRouter<'a> {
         /* Group pins of the same BELs into subgraphs */
         let st_list = device.reborrow().get_site_type_list().unwrap();
         for (node_idx, node) in self.graph.nodes.iter().enumerate() {
-            let (bel_idx, bel_is_routing, bel_is_site_port) = match node {
-                RoutingGraphNode::BelPort(bel_idx) => (bel_idx, false, false),
-                RoutingGraphNode::RoutingBelPort(bel_idx) => (bel_idx, true, false),
-                RoutingGraphNode::SitePort(bel_idx) => (bel_idx, true, true),
-                RoutingGraphNode::FreePort => unreachable!(),
+            let (bel_idx, bel_is_routing, bel_is_site_port) = match node.kind {
+                RoutingGraphNodeKind::BelPort(bel_idx) => (bel_idx, false, false),
+                RoutingGraphNodeKind::RoutingBelPort(bel_idx) => (bel_idx, true, false),
+                RoutingGraphNodeKind::SitePort(bel_idx) => (bel_idx, true, true),
+                RoutingGraphNodeKind::FreePort => unreachable!(),
             };
-            let stitt = self.bels[*bel_idx].site_type_idx;
-            let bel_name = device.ic_str(self.bels[*bel_idx].name).unwrap();
+            let stitt = self.bels[bel_idx].site_type_idx;
+            let bel_name = device.ic_str(self.bels[bel_idx].name).unwrap();
             let st_idx = self.tt.get_site_types().unwrap().get(stitt).get_primary_type();
             let st = st_list.get(st_idx);
             let st_name = device.ic_str(st.get_name()).unwrap();
