@@ -15,6 +15,7 @@
 
 
 use clap::Parser;
+use serde::Serialize;
 use std::path::Path;
 use std::fs::File;
 use std::io::Write;
@@ -35,7 +36,10 @@ pub mod logic_formula;
 pub mod site_brute_router;
 
 use crate::ic_loader::OpenOpts;
-use crate::site_brute_router::{BruteRouter, RoutingInfo};
+use crate::site_brute_router::{
+    BruteRouter,
+    PinPairRoutingInfo
+};
 use crate::log::*;
 use crate::common::*;
 
@@ -120,12 +124,30 @@ impl Exporter {
     }
 }
 
-fn map_routing_map_to_serializable(routing_map: HashMap<(usize, usize), RoutingInfo>)
-    -> HashMap<String, RoutingInfo>
+fn map_routing_map_to_serializable<'h>(
+    routing_map: &'h HashMap<(usize, usize), PinPairRoutingInfo>)
+    -> HashMap<String, &'h PinPairRoutingInfo>
 {
-    routing_map.into_iter()
+    routing_map.iter()
         .map(|(k, v)| (format!("{}->{}", k.0, k.1), v))
         .collect()    
+}
+
+impl Serialize for site_brute_router::RoutingInfo {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
+        S: serde::Serializer
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut s = serializer.serialize_struct("RoutingInfo", 3)?;
+        
+        let serializable_map = map_routing_map_to_serializable(&self.pin_to_pin_routing);
+        
+        s.serialize_field("pin_to_pin_routing", &serializable_map)?;
+        s.serialize_field("out_of_site_sources", &self.out_of_site_sources)?;
+        s.serialize_field("out_of_site_sinks", &self.out_of_site_sinks)?;
+        s.end()
+    }
 }
 
 fn main() {
@@ -168,17 +190,26 @@ fn main() {
             brouter.export_dot(&device, &tile_name)
         }).unwrap();
 
-        let routing_map = if args.threads == 1 {
+        let routing_info = if args.threads == 1 {
             brouter.route_all(!args.no_formula_opt)
         } else {
             brouter.route_all_multithreaded(args.threads, !args.no_formula_opt)
         };
-        println!("No. of routing pairs for tile {}: {}", tile_name, routing_map.len());
+
+        println!(concat!(
+            "Tile {}:\n",
+            "    No. of intra-site routing pairs:               {}\n",
+            "    No. of pins connected to out-of-site-sources:  {}\n",
+            "    No. of pins connected to out-of-site-sinks:    {}"
+            ),
+            tile_name,
+            routing_info.pin_to_pin_routing.len(),
+            routing_info.out_of_site_sources.len(),
+            routing_info.out_of_site_sinks.len()
+        );
 
         json_exporter.ignore_or_export_str(&tile_name, || {
-            serde_json::to_string_pretty(
-                &map_routing_map_to_serializable(routing_map)
-            ).unwrap()
+            serde_json::to_string_pretty(&routing_info).unwrap()
         }).unwrap();
     }
 }

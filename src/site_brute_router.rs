@@ -79,12 +79,12 @@ struct BELInfo {
 }
 
 #[derive(Serialize)]
-pub struct RoutingInfo {
+pub struct PinPairRoutingInfo {
     requires: Vec<DNFCube<ConstrainingElement>>,
     implies: Vec<DNFCube<ConstrainingElement>>,
 }
 
-impl RoutingInfo {
+impl PinPairRoutingInfo {
     /* A primitive heuristic for sorting constraints by number of terms.
      * The idea is that a greedy algorithm would set value of the least
      * constraints when placing a cell. Perhaps a better heuristic could
@@ -99,7 +99,7 @@ impl RoutingInfo {
     }
 }
 
-impl From<PTPRMarker> for RoutingInfo {
+impl From<PTPRMarker> for PinPairRoutingInfo {
     fn from(marker: PTPRMarker) -> Self {
         let mut me = Self {
             requires: marker.constraints.cubes,
@@ -108,6 +108,12 @@ impl From<PTPRMarker> for RoutingInfo {
         me.default_sort();
         me
     }
+}
+
+pub struct RoutingInfo {
+    pub pin_to_pin_routing: HashMap<(usize, usize), PinPairRoutingInfo>,
+    pub out_of_site_sources: HashMap<usize, Vec<usize>>,
+    pub out_of_site_sinks: HashMap<usize, Vec<usize>>,
 }
 
 /* Gathers BELs in the order matching the one in chipdb */
@@ -581,7 +587,7 @@ impl<'a> BruteRouter<'a> {
         from: usize,
         step_counter: Option<&mut usize>, /* Can be used only in debug build */
         optimize: bool
-    ) -> impl Iterator<Item = RoutingInfo> {
+    ) -> impl Iterator<Item = PinPairRoutingInfo> {
         let router = PortToPortRouter::new(graph, from);
         router.route_all(step_counter)
             .into_iter()
@@ -595,7 +601,7 @@ impl<'a> BruteRouter<'a> {
     }
 
     fn route_range(graph: &RoutingGraph, range: std::ops::Range<usize>, optimize: bool)
-        -> HashMap<(usize, usize), RoutingInfo>
+        -> HashMap<(usize, usize), PinPairRoutingInfo>
     {
         let pin_cnt = graph.nodes.len();
         debug_assert!(range.start < range.end);
@@ -621,13 +627,55 @@ impl<'a> BruteRouter<'a> {
         pin_to_pin_map
     }
 
-    pub fn route_all(self, optimize: bool) -> HashMap<(usize, usize), RoutingInfo> {
-        Self::route_range(&self.graph, 0 .. self.tile_belpin_idx_to_bel_pin.len(), optimize)
+    fn gather_out_of_site_info(
+        graph: &RoutingGraph,
+        map: &HashMap<(usize, usize), PinPairRoutingInfo>
+    )
+        -> (HashMap<usize, Vec<usize>>, HashMap<usize, Vec<usize>>)
+    {
+        let mut out_of_site_sources = HashMap::new();
+        let mut out_of_site_sinks = HashMap::new();
+
+        for ((from, to), _) in map {
+            let from_node = graph.get_node(*from);
+            if let PinDir::Output | PinDir::Inout = from_node.dir {
+                if let RoutingGraphNodeKind::SitePort(_) = from_node.kind {
+                    out_of_site_sources.entry(*to).or_insert_with(Vec::new).push(*from);
+                }
+            }
+
+            let to_node = graph.get_node(*to);
+            if let PinDir::Input | PinDir::Inout = to_node.dir {
+                if let RoutingGraphNodeKind::SitePort(_) = to_node.kind {
+                    out_of_site_sinks.entry(*from).or_insert_with(Vec::new).push(*to);
+                }
+            }
+        }
+
+        (out_of_site_sources, out_of_site_sinks)
+    }
+
+    pub fn route_all(self, optimize: bool) -> RoutingInfo {
+        let map = Self::route_range(
+            &self.graph,
+            0 .. self.tile_belpin_idx_to_bel_pin.len(),
+            optimize
+        );
+
+        let (out_of_site_sources, out_of_site_sinks) =
+            Self::gather_out_of_site_info(&self.graph, &map);
+
+
+        RoutingInfo {
+            pin_to_pin_routing: map,
+            out_of_site_sources,
+            out_of_site_sinks,
+        }
     }
 
     /* Not the best multithreading, but should improve the runtime nevertheless. */
     pub fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
-        -> HashMap<(usize, usize), RoutingInfo>
+        -> RoutingInfo
     {
         use std::sync::Arc;
 
@@ -649,7 +697,15 @@ impl<'a> BruteRouter<'a> {
             let map = handle.join().unwrap();
             total_map.extend(map.into_iter());
         }
-        total_map
+
+        let (out_of_site_sources, out_of_site_sinks) =
+            Self::gather_out_of_site_info(&*graph, &total_map);
+
+        RoutingInfo {
+            pin_to_pin_routing: total_map,
+            out_of_site_sources,
+            out_of_site_sinks,
+        }
     }
 
     /* TODO: This should be in a separate file. */
