@@ -708,9 +708,14 @@ impl<'a> BruteRouter<'a> {
                 let pin_name = device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
                 
                 dot += &format!(
-                    "        {} [label=\"{}\"];\n",
+                    "        {} [label=\"{}\", color={}];\n",
                     pin_idx,
-                    pin_name
+                    pin_name,
+                    match self.graph.get_node(*pin_idx).dir {
+                        PinDir::Input => "\"#8ed38e\"",
+                        PinDir::Output => "\"#7cc1c4\"",
+                        PinDir::Inout => "\"#ffcf2f\""
+                    }
                 );
             }
             dot += &format!("    }}\n\n");
