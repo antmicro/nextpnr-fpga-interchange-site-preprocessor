@@ -22,3 +22,27 @@ impl<'a> IcStr<'a> for crate::ic_loader::archdef::Root<'a> {
         self.get_str_list().unwrap().get(id)
     }
 }
+
+/* Splits a range into `slices` possibly even ranges  */
+pub fn split_range_nicely(range: std::ops::Range<usize>, slices: usize)
+    -> impl Iterator<Item = std::ops::Range<usize>> where
+{
+    let len = range.end - range.start;
+    let split_sz = len / slices;
+    let total = split_sz * slices;
+    let left = len - total;
+    
+    (0 .. slices)
+        .scan((0, left), move |(current_idx, left), _| {
+            let my_len = if *left > 0 {
+                *left -= 1;
+                split_sz + 1
+            } else {
+                split_sz
+            };
+            let range = *current_idx .. (*current_idx + my_len);
+            *current_idx += my_len;
+            return Some(range);
+        })
+        .filter(|range| range.start != range.end)
+}

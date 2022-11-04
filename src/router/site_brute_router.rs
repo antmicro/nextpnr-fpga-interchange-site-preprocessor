@@ -16,7 +16,10 @@
 
 use core::panic;
 use std::collections::{HashMap, VecDeque};
-use crate::common::IcStr;
+use crate::common::{
+    IcStr,
+    split_range_nicely
+};
 use crate::logic_formula::*;
 use lazy_static::__Deref;
 use replace_with::replace_with_or_abort;
@@ -24,59 +27,8 @@ use std::thread;
 use crate::log::*;
 use crate::ic_loader::archdef::Root as Device;
 use serde::{Serialize, Deserialize};
-
-/* XXX: crate::ic_loader::LogicalNetlist_capnp::netlist::Direction doe not implement Hash */
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
-pub enum PinDir {
-    Inout,
-    Input,
-    Output,
-}
-
-impl From<crate::ic_loader::LogicalNetlist_capnp::netlist::Direction> for PinDir {
-    fn from(pd: crate::ic_loader::LogicalNetlist_capnp::netlist::Direction) -> Self {
-        use crate::ic_loader::LogicalNetlist_capnp::netlist::Direction::*;
-        match pd {
-            Inout => Self::Inout,
-            Input => Self::Input,
-            Output => Self::Output,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
-enum BELCategory {
-    /* We do not distinguish between Logic and Routing categories, because some 
-     * logic bels can also be route-throughs, and more precise routing information 
-     * can be deduced by examining site-pips (pseudo-pips). */
-    LogicOrRouting,
-    SitePort,
-}
-
-impl From<crate::ic_loader::DeviceResources_capnp::device::BELCategory> for BELCategory {
-    fn from(cat: crate::ic_loader::DeviceResources_capnp::device::BELCategory) -> Self {
-        use crate::ic_loader::DeviceResources_capnp::device::BELCategory::*;
-        match cat {
-            Logic => Self::LogicOrRouting,
-            Routing => Self::LogicOrRouting,
-            SitePort => Self::SitePort,
-        }
-    }
-}
-
-#[derive(Clone, Hash, PartialEq, Eq)]
-pub struct BELPin {
-    pub idx_in_site_type: u32,
-    pub name: u32,
-    pub dir: PinDir,
-}
-
-struct BELInfo {
-    site_type_idx: u32, /* Site Type Idx IN TILE TYPE! */
-    name: u32,
-    category: BELCategory,
-    pins: Vec<BELPin>,
-}
+use crate::dot_exporter::SiteRoutingGraphDotExporter;
+use super::*;
 
 #[derive(Serialize)]
 pub struct PinPairRoutingInfo {
@@ -116,48 +68,16 @@ pub struct RoutingInfo {
     pub out_of_site_sinks: HashMap<usize, Vec<usize>>,
 }
 
-/* Gathers BELs in the order matching the one in chipdb */
-fn gather_bels_in_tile_type<'a>(
-    device: &'a Device<'a>,
-    tt: &crate::ic_loader::archdef::TileTypeReader<'a>
-) -> Vec<BELInfo> {
-    let mut bels = Vec::new();
-    let st_list = device.reborrow().get_site_type_list().unwrap();
-    for (stitt_idx, stitt) in tt.reborrow().get_site_types().unwrap().iter().enumerate() {
-        let st_idx = stitt.get_primary_type();
-        let st = st_list.get(st_idx);
-        bels.extend(
-            st.get_bels().unwrap().into_iter()
-                .map(|reader| BELInfo {
-                    site_type_idx: stitt_idx as u32,
-                    name: reader.get_name(),
-                    category: reader.get_category().unwrap().into(),
-                    pins: reader.get_pins().unwrap().into_iter()
-                        .map(|pin_idx| {
-                            let pin = st.get_bel_pins().unwrap().get(pin_idx);
-                            BELPin {
-                                idx_in_site_type: pin_idx,
-                                name: pin.get_name(),
-                                dir: pin.get_dir().unwrap().into()
-                            }
-                        })
-                        .collect(),
-                })
-        );
-    }
-    bels
-}
-
-type RoutingGraphEdge = bool;
+pub type RoutingGraphEdge = bool;
 
 #[derive(Clone)]
-struct RoutingGraphNode {
-    kind: RoutingGraphNodeKind,
-    dir: PinDir,
+pub struct RoutingGraphNode {
+    pub kind: RoutingGraphNodeKind,
+    pub dir: PinDir,
 }
 
 #[derive(Clone)]
-enum RoutingGraphNodeKind {
+pub enum RoutingGraphNodeKind {
     BelPort(usize),
     RoutingBelPort(usize),
     SitePort(usize),
@@ -173,13 +93,13 @@ impl Default for RoutingGraphNode {
     }
 }
 
-struct RoutingGraph {
+pub struct RoutingGraph {
     nodes: Vec<RoutingGraphNode>,
     edges: Vec<RoutingGraphEdge>,  /* Edges between BEL pins */
 }
 
 impl RoutingGraph {
-    fn new(pin_count: usize) -> Self {
+    pub fn new(pin_count: usize) -> Self {
         Self {
             nodes: vec![Default::default(); pin_count],
             edges: vec![Default::default(); pin_count * pin_count],
@@ -187,7 +107,7 @@ impl RoutingGraph {
     }
 
     #[allow(unused)]
-    fn get_edge<'a>(&'a self, from: usize, to: usize) -> &'a RoutingGraphEdge {
+    pub fn get_edge<'a>(&'a self, from: usize, to: usize) -> &'a RoutingGraphEdge {
         &self.edges[from * self.nodes.len() + to]
     }
 
@@ -195,7 +115,7 @@ impl RoutingGraph {
         &mut self.edges[from * self.nodes.len() + to]
     }
 
-    fn connect<'a>(&'a mut self, from: usize, to: usize)
+    pub fn connect<'a>(&'a mut self, from: usize, to: usize)
         -> Option<&'a mut RoutingGraphEdge>
     {
         let edge = self.get_edge_mut(from, to);
@@ -210,7 +130,7 @@ impl RoutingGraph {
     }
 
     #[allow(unused)]
-    fn get_node<'a>(&'a self, node: usize) -> &'a RoutingGraphNode {
+    pub fn get_node<'a>(&'a self, node: usize) -> &'a RoutingGraphNode {
         &self.nodes[node]
     }
 
@@ -218,7 +138,7 @@ impl RoutingGraph {
         &mut self.nodes[node]
     }
 
-    fn edges_from<'a>(&'a self, from: usize) -> impl Iterator<Item = usize> + 'a {
+    pub fn edges_from<'a>(&'a self, from: usize) -> impl Iterator<Item = usize> + 'a {
         self.edges.iter()
             .skip(from * self.nodes.len())
             .take(self.nodes.len())
@@ -227,7 +147,7 @@ impl RoutingGraph {
             .map(|(idx, _)| idx)
     }
 
-    fn edges_to<'a>(&'a self, to: usize) -> impl Iterator<Item = usize> + 'a {
+    pub fn edges_to<'a>(&'a self, to: usize) -> impl Iterator<Item = usize> + 'a {
         self.edges.iter()
             .skip(to)
             .step_by(self.nodes.len())
@@ -235,6 +155,14 @@ impl RoutingGraph {
             .enumerate()
             .filter(|(_, e)| **e)
             .map(|(idx, _)| idx)
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
     }
 }
 
@@ -708,138 +636,19 @@ impl<'a> BruteRouter<'a> {
         }
     }
 
-    /* TODO: This should be in a separate file. */
-    /* Exports routing graph in DOT format. */
-    pub fn export_dot(&self, device: &Device<'a>, name: &str) -> String {
-        let mut bel_subgraphs = HashMap::new();
-
-        /* Group pins of the same BELs into subgraphs */
-        let st_list = device.reborrow().get_site_type_list().unwrap();
-        for (node_idx, node) in self.graph.nodes.iter().enumerate() {
-            let (bel_idx, bel_is_routing, bel_is_site_port) = match node.kind {
-                RoutingGraphNodeKind::BelPort(bel_idx) => (bel_idx, false, false),
-                RoutingGraphNodeKind::RoutingBelPort(bel_idx) => (bel_idx, true, false),
-                RoutingGraphNodeKind::SitePort(bel_idx) => (bel_idx, true, true),
-                RoutingGraphNodeKind::FreePort => unreachable!(),
-            };
-            let stitt = self.bels[bel_idx].site_type_idx;
-            let bel_name = device.ic_str(self.bels[bel_idx].name).unwrap();
-            let st_idx = self.tt.get_site_types().unwrap().get(stitt).get_primary_type();
-            let st = st_list.get(st_idx);
-            let st_name = device.ic_str(st.get_name()).unwrap();
-
-            let bel_name = format!("{}_{}/{}", st_name, stitt, bel_name);
-
-            let bucket = bel_subgraphs.entry(bel_name)
-                .or_insert_with(|| BELSubGraph::default());
-            
-            if bel_is_site_port {
-                bucket.bel_category = BELSubGrapgBELCategory::SitePort;
-            } else if bel_is_routing {
-                bucket.bel_category = BELSubGrapgBELCategory::Routing;
-            }
-
-            bucket.pins.push(node_idx);
-        }
-        
-        /* Write DOT */
-        let mut dot = "# DOT Graph generated by NISP\n\n".to_string();
-        dot += &format!("digraph {} {{\n\n", name);
-
-        for (bel_name, bel_subgraph) in bel_subgraphs {
-            
-
-            dot += &format!("    subgraph cluster_{} {{\n", bel_name.replace('/', "__"));
-            dot += &format!("        node [style=filled];\n");
-            dot += &format!("        label = \"{}\";\n", bel_name);
-            dot += &format!(
-                "        color = \"{}\";\n",
-                bel_subgraph.bel_category.get_color_str()
-            );
-
-            for pin_idx in &bel_subgraph.pins {
-                let (bel_idx, bel_pin_idx) = self.tile_belpin_idx_to_bel_pin[*pin_idx];
-                let bel = &self.bels[bel_idx];
-                
-                let pin_name = device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
-                
-                dot += &format!(
-                    "        {} [label=\"{}\", color={}];\n",
-                    pin_idx,
-                    pin_name,
-                    match self.graph.get_node(*pin_idx).dir {
-                        PinDir::Input => "\"#8ed38e\"",
-                        PinDir::Output => "\"#7cc1c4\"",
-                        PinDir::Inout => "\"#ffcf2f\""
-                    }
-                );
-            }
-            dot += &format!("    }}\n\n");
-        }
-
-        for from in 0 .. self.graph.nodes.len() {
-            for to in self.graph.edges_from(from) {
-                dot += &format!("    {} -> {};\n", from, to);
-            }
-        }
-
-        dot += "}\n";
-
-        dot
+    pub fn create_dot_exporter<'s: 'a>(&'s self)
+        -> SiteRoutingGraphDotExporter<
+            &'s RoutingGraph,
+            &'s Vec<BELInfo>,
+            &'s Vec<(usize, usize)>,
+            &'s crate::ic_loader::archdef::TileTypeReader<'a>
+           >
+        {
+        SiteRoutingGraphDotExporter::new(
+            &self.graph,
+            &self.bels,
+            &self.tile_belpin_idx_to_bel_pin,
+            &self.tt
+        )
     }
 }
-
-enum BELSubGrapgBELCategory {
-    NoRouting,
-    Routing,
-    SitePort,
-}
-
-impl BELSubGrapgBELCategory {
-    fn get_color_str(&self) -> &'static str {
-        match self {
-            Self::NoRouting => "blue",
-            Self::Routing => "purple",
-            Self::SitePort => "green"
-        }
-    }
-}
-
-struct BELSubGraph {
-    bel_category: BELSubGrapgBELCategory,
-    pins: Vec<usize>,
-}
-
-impl Default for BELSubGraph {
-    fn default() -> Self {
-        Self {
-            bel_category: BELSubGrapgBELCategory::NoRouting,
-            pins: Vec::new(),
-        }
-    }
-}
-
-/* Splits a range into `slices` possibly even ranges  */
-fn split_range_nicely(range: std::ops::Range<usize>, slices: usize)
-    -> impl Iterator<Item = std::ops::Range<usize>> where
-{
-    let len = range.end - range.start;
-    let split_sz = len / slices;
-    let total = split_sz * slices;
-    let left = len - total;
-    
-    (0 .. slices)
-        .scan((0, left), move |(current_idx, left), _| {
-            let my_len = if *left > 0 {
-                *left -= 1;
-                split_sz + 1
-            } else {
-                split_sz
-            };
-            let range = *current_idx .. (*current_idx + my_len);
-            *current_idx += my_len;
-            return Some(range);
-        })
-        .filter(|range| range.start != range.end)
-}
-

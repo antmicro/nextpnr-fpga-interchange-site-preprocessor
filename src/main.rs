@@ -33,10 +33,11 @@ pub mod log;
 pub mod common;
 pub mod ic_loader;
 pub mod logic_formula;
-pub mod site_brute_router;
+pub mod router;
+pub mod dot_exporter;
 
 use crate::ic_loader::OpenOpts;
-use crate::site_brute_router::{
+use crate::router::site_brute_router::{
     BruteRouter,
     PinPairRoutingInfo
 };
@@ -133,7 +134,7 @@ fn map_routing_map_to_serializable<'h>(
         .collect()    
 }
 
-impl Serialize for site_brute_router::RoutingInfo {
+impl Serialize for router::site_brute_router::RoutingInfo {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
         S: serde::Serializer
     {
@@ -187,7 +188,7 @@ fn main() {
         let brouter = BruteRouter::new(&device, &tt);
 
         dot_exporter.ignore_or_export_str(&tile_name, || {
-            brouter.export_dot(&device, &tile_name)
+            brouter.create_dot_exporter().export_dot(&device, &tile_name)
         }).unwrap();
 
         let routing_info = if args.threads == 1 {
