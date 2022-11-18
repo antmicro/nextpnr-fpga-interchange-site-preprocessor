@@ -1,5 +1,7 @@
 # NISP - Nextpnr-fpga_Interchange Site Preprocessor
 
+![graph screenshot](nisp_graph_screen.png)
+
 ## What's NISP
 
 The tool is a simple pin-to-pin site router which gathers information about routability
@@ -17,9 +19,9 @@ it can output JSONs with routability information.
 
 ## Features
 
-NISP has the following features at the  moment
+NISP has the following features at the moment
 
-* Generate site-ruting graph and export it into graphviz .dot files
+* Generate site-routing graph and export it into graphviz .dot files
   (`--dot`, `--dot-prefix` options)
 * Generate routability lookup and constraints and export it into JSON
   (`--json`, `--json-prefix` options)
@@ -47,7 +49,7 @@ NISP has the following features at the  moment
 ## Running NISP
 
 ```
-nisp [OPTIONS] <DEVICE> <BBA>
+nisp [OPTIONS] <DEVICE> <BBA> <COMMAND>
 ```
 
 * `<DEVICE>` - Path to fpga-interchaneg device file
@@ -58,14 +60,23 @@ Descriptions for currently available options are available when running the prog
 
 If an option requires you to specify a list of tile type names, you can use `:all` as a
 replacement for listing all tiles in the architecture. To list select entries you can repeat
-the falg multiple times (eq. `--json CLEM --json CLEL`). Keep in mind that NISP won't create
+the flag multiple times (eq. `--json CLEM --json CLEL`). Keep in mind that NISP won't create
 any prefix directories you specify on its own.
+
+### `preprocess` subcommand
+
+Gathers information for routability between BEL pins in a site.
+
+### `route-pair` subcommand
+
+For given pair of BEL pins, print all routes the site-router found as viable.
+This option is intended for debugging purposes.
 
 ### `test` script
 This script can be used to simplify compiling, running and debugging NISP.
-It's short, so the best way to understand what it does is just tot read it.
+It's short, so the best way to understand what it does is just to read it.
 
-## JSON output
+## JSON output (`preprocess` subcommand)
 
 The JSON output is created by serializing internal structures of NISP. Its structure might
 change over time. As such, I won't be documenting its structure in detail, instead I'm
@@ -93,4 +104,4 @@ Currently the JSON files which are outputted per-tile contain the following info
 
 -------------------------------------------------
 
-Copyright (c) Antmicro 2022
+Copyright (c) 2022 Antmicro 
