@@ -18,9 +18,7 @@ use lazy_static::__Deref;
 use crate::router::site_brute_router::PinId;
 use serde::Serialize;
 use std::path::Path;
-use std::fs::File;
-use std::io::Write;
-use std::collections::{HashSet, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 #[macro_use]
@@ -36,6 +34,7 @@ pub mod common;
 pub mod ic_loader;
 pub mod logic_formula;
 pub mod router;
+pub mod exporter;
 pub mod dot_exporter;
 
 use crate::ic_loader::OpenOpts;
@@ -45,6 +44,7 @@ use crate::router::site_brute_router::{
 };
 use crate::log::*;
 use crate::common::*;
+use crate::exporter::*;
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -124,47 +124,6 @@ enum SubCommands {
     RoutePair(RoutePairCmd),
 }
 
-struct Exporter {
-    prefix: String,
-    suffix: String,
-    export: HashSet<String>,
-    export_all: bool
-}
-
-impl Exporter {
-    fn new(arg_list: &Option<Vec<String>>, prefix: String, suffix: String) -> Self {
-        println!("{:?}", arg_list);
-        let mut export_all = false;
-        let mut export = HashSet::new();
-        if let Some(args) = arg_list {
-            for arg in args {
-                if arg == ":all" {
-                    export_all = true;
-                } else {
-                    export.insert(arg.clone());
-                }
-            }
-        }
-
-        Self { prefix, suffix, export, export_all }
-    }
-
-    fn ignore_or_export_str<F>(&self, name: &str, exporter: F)
-        -> std::io::Result<()>
-    where
-        F: FnOnce() -> String
-    {
-        if self.export_all || self.export.contains(name) {
-            let data = exporter();
-            let path = Path::new(&self.prefix)
-                .join(Path::new(&(name.to_string() + &self.suffix)));
-            let mut file = File::create(path).unwrap();
-            return file.write(data.as_bytes()).map(|_| ());
-        }
-        Ok(())
-    }
-}
-
 fn map_routing_map_to_serializable<'h>(
     routing_map: &'h HashMap<(usize, usize), PinPairRoutingInfo>)
     -> HashMap<String, &'h PinPairRoutingInfo>
@@ -208,15 +167,21 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
         })
         .collect();
     
-    let dot_exporter = Exporter::new(&args.dot, args.dot_prefix.clone(), ".dot".into());
-    let json_exporter = Exporter::new(&args.json, args.json_prefix.clone(), ".json".into());
+    let mut dot_exporter =
+        MultiFileExporter::new(&args.dot, args.dot_prefix.clone(), ".dot".into());
+    let mut json_exporter = CompoundJsonExporter::new(
+        &args.json,
+        Path::new(&args.json_prefix).join(
+            format!("{}_site_routability.json", device.get_name().unwrap())
+        )
+    );
     
     for (tt_id, tt) in tile_types.iter().enumerate() {
         let tile_name = device.ic_str(tt.get_name()).unwrap();
         dbg_log!(DBG_INFO, "Processing tile {}", tile_name);
         let brouter = BruteRouter::<()>::new(&device, tt_id as u32);
 
-        dot_exporter.ignore_or_export_str(&tile_name, || {
+        dot_exporter.ignore_or_export(&tile_name, || {
             brouter.create_dot_exporter(&device).export_dot(&device, &tile_name)
         }).unwrap();
 
@@ -238,10 +203,11 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
             routing_info.out_of_site_sinks.len()
         );
 
-        json_exporter.ignore_or_export_str(&tile_name, || {
-            serde_json::to_string_pretty(&routing_info).unwrap()
-        }).unwrap();
+        json_exporter.ignore_or_export(&tile_name, || routing_info).unwrap();
     }
+
+    <MultiFileExporter as Exporter<String>>::flush(&mut dot_exporter).unwrap();
+    json_exporter.flush().unwrap();
 }
 
 fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
