@@ -15,7 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 capnp = "0.14.8"
-clap = { version = "3.2.11", features = ["derive"] }
+clap = { version = "4.0.25", features = ["derive"] }
 flate2 = "1.0.22"
 memmap2 = "0.5.3"
 lazy_static = "1.4.0"

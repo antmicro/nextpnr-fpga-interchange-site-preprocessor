@@ -37,12 +37,13 @@ fi
 BBA=test_out/${DEVICE}_extra.bba
 
 EXTRA_OPTS=$EXTRA_OPTS
+EXTRA_GLOBAL_OPTS=$EXTRA_GLOBAL_OPTS
 BIN_PATH=""
 
 export FPGA_INTERCHANGE_SCHEMA_DIR="${FPGA_INTERCHANGE_TESTS_PATH}/third_party/fpga-interchange-schema"
 if [[ "$DEBUG_MODE" = 1 ]]; then
     cargo build
-    EXTRA_OPTS="${EXTRA_OPTS} --raw"
+    EXTRA_GLOBAL_OPTS="${EXTRA_GLOBAL_OPTS} --raw"
     BIN_PATH="./target/debug/nisp"
 else
     cargo build --release
@@ -57,7 +58,7 @@ if [[ -n "$THREADS" ]]; then
     EXTRA_OPTS="${EXTRA_OPTS} --threads ${THREADS}"
 fi
 
-echo "Running \`$BIN_PATH $DEVICE_PATH $BBA $EXTRA_OPTS\`"
+echo "Running \`$BIN_PATH $EXTRA_GLOBAL_OPTS $DEVICE_PATH $BBA preprocess $EXTRA_OPTS\`"
 echo ""
 export RUST_BACKTRACE=1
-$BIN_PATH $DEVICE_PATH $BBA $EXTRA_OPTS 2>&1 | tee $LOG
+$BIN_PATH $EXTRA_GLOBAL_OPTS $DEVICE_PATH $BBA preprocess $EXTRA_OPTS 2>&1 | tee $LOG

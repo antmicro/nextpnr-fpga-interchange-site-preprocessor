@@ -13,13 +13,15 @@
  * limitations under the License.
  */
 
-
-use clap::Parser;
+use clap::{arg, Parser};
+use lazy_static::__Deref;
+use crate::router::site_brute_router::PinId;
 use serde::Serialize;
 use std::path::Path;
 use std::fs::File;
 use std::io::Write;
 use std::collections::{HashSet, HashMap};
+use std::sync::{Arc, Mutex};
 
 #[macro_use]
 extern crate lazy_static;
@@ -58,30 +60,68 @@ struct Args {
     bba: String,
     #[clap(long, help = "Use raw (uncompressed) device file")]
     raw: bool,
-    #[clap(long, help = "Tile types to be routed")]
+    #[command(subcommand)]
+    command: SubCommands,
+}
+
+#[derive(Parser, Debug)]
+struct PreprocessCmd {
+    #[arg(long, help = "Tile types to be routed")]
     tile_types: Option<Vec<String>>,
-    #[clap(
+    #[arg(
         long,
         default_value = "1",
         help = "Number of threads to be used during preprocessing"
     )]
     threads: usize,
-    #[clap(
+    #[arg(
         long,
         help = "Tile types to have their routing graphs exported to graphviz .dot files"
     )]
     dot: Option<Vec<String>>,
-    #[clap(long, default_value = "", help = "Directory for saving .dot files")]
+    #[arg(long, default_value = "", help = "Directory for saving .dot files")]
     dot_prefix: String,
-    #[clap(
+    #[arg(
         long,
         help = "Tile types to have their routing cache exported to JSON format"
     )]
     json: Option<Vec<String>>,
-    #[clap(long, default_value = "", help = " Directory for saving .json files")]
+    #[arg(long, default_value = "", help = " Directory for saving .json files")]
     json_prefix: String,
-    #[clap(long, help = "Do not optimize logic formulas for constraints")]
+    #[arg(long, help = "Do not optimize logic formulas for constraints")]
     no_formula_opt: bool,
+}
+
+#[derive(Parser, Debug)]
+struct RoutePairCmd {
+    #[arg(help = "Tile Type")]
+    tile_type: String,
+    #[arg(help = "Path to source pin: site_name/bel_name.pin_name")]
+    from: String,
+    #[arg(help = "Path to destination pin: site_name/bel_name.pin_name")]
+    to: String,
+}
+
+impl RoutePairCmd {
+    fn get_from_triple<'s>(&'s self) -> Result<(&'s str, &'s str, &'s str), ()> {
+        let (site_name, tail) = self.from.split_once('/').ok_or(())?;
+        let (bel_name, pin_name) = tail.split_once('.').ok_or(())?;
+
+        Ok((site_name, bel_name, pin_name))
+    }
+
+    fn get_to_triple<'s>(&'s self) -> Result<(&'s str, &'s str, &'s str), ()> {
+        let (site_name, tail) = self.to.split_once('/').ok_or(())?;
+        let (bel_name, pin_name) = tail.split_once('.').ok_or(())?;
+
+        Ok((site_name, bel_name, pin_name))
+    }
+}
+
+#[derive(Parser, Debug)]
+enum SubCommands {
+    Preprocess(PreprocessCmd),
+    RoutePair(RoutePairCmd),
 }
 
 struct Exporter {
@@ -151,18 +191,7 @@ impl Serialize for router::site_brute_router::RoutingInfo {
     }
 }
 
-fn main() {
-    let args = Args::parse();
-    assert!(args.threads != 0);
-
-    let archdef_msg = ic_loader::open(
-        Path::new(&args.device), 
-        OpenOpts { raw: args.raw }
-    ).expect("Couldn't open device file");
-    
-    let device = archdef_msg.get_archdef_root()
-        .expect("Device file does not contain a valid root structure");
-
+fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
     let tile_types: Vec<_> = device.reborrow().get_tile_type_list().unwrap()
         .into_iter()
         .filter(|tt| {
@@ -182,13 +211,13 @@ fn main() {
     let dot_exporter = Exporter::new(&args.dot, args.dot_prefix.clone(), ".dot".into());
     let json_exporter = Exporter::new(&args.json, args.json_prefix.clone(), ".json".into());
     
-    for tt in tile_types {
+    for (tt_id, tt) in tile_types.iter().enumerate() {
         let tile_name = device.ic_str(tt.get_name()).unwrap();
         dbg_log!(DBG_INFO, "Processing tile {}", tile_name);
-        let brouter = BruteRouter::new(&device, &tt);
+        let brouter = BruteRouter::<()>::new(&device, tt_id as u32);
 
         dot_exporter.ignore_or_export_str(&tile_name, || {
-            brouter.create_dot_exporter().export_dot(&device, &tile_name)
+            brouter.create_dot_exporter(&device).export_dot(&device, &tile_name)
         }).unwrap();
 
         let routing_info = if args.threads == 1 {
@@ -212,5 +241,84 @@ fn main() {
         json_exporter.ignore_or_export_str(&tile_name, || {
             serde_json::to_string_pretty(&routing_info).unwrap()
         }).unwrap();
+    }
+}
+
+fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
+    let (tt_id, _) = device.reborrow().get_tile_type_list().unwrap()
+        .into_iter()
+        .enumerate()
+        .find(|(_, tt)| {
+            device.ic_str(tt.get_name()).unwrap() == args.tile_type
+        })
+        .expect("Wrong tile type name");
+    
+    let (from_site, from_bel, from_pin) = args.get_from_triple()
+        .expect("Incorrent from pin format!");
+    let (to_site, to_bel, to_pin) = args.get_to_triple()
+        .expect("Incorrent to pin format!");
+
+    
+    let router_state = Arc::new(Mutex::new(HashMap::new()));
+    //let rs = Arc::clone(&router_state);
+    let routes = Arc::new(Mutex::new(Vec::new()));
+    let routes_l = Arc::clone(&routes);
+
+    let brouter = BruteRouter::<Vec<PinId>>::new(&device, tt_id as u32);
+    
+    let from = brouter.get_pin_id(&device, from_site, from_bel, from_pin)
+        .expect("From pin does not exist!");
+    
+    let to = brouter.get_pin_id(&device, to_site, to_bel, to_pin)
+        .expect("To pin does not exist!");
+    
+    let brouter = brouter.with_callback(move |frame| {
+        let mut rs = router_state.deref().lock().unwrap();
+
+        rs.insert(frame.node, frame.prev_node);
+
+        let mut acc = frame.accumulator.clone();
+        acc.push(frame.node);
+
+        /* Save newly found route */
+        if frame.node == to {
+            routes.deref().lock().unwrap().push(acc.clone());
+        }
+
+        (None, None, acc)
+    });
+
+    let _ = brouter.route_pins(from, None, false).enumerate();
+
+    println!("Explored the following routes:");
+    for (route_id, route) in routes_l.deref().lock().unwrap().deref().iter().enumerate() {
+        println!("  Route #{}:", route_id);
+        for pin in route {
+            let (site, bel, pin) = brouter.get_pin_name(&device, *pin);
+            println!("    {}/{}.{}", site, bel, pin);
+        }
+    }
+
+   /*  println!("Visited nodes: {:?}", rs.deref().lock().unwrap()); */
+}
+
+fn main() {
+    let args = Args::parse();
+
+    if let SubCommands::Preprocess(prepreocess) = &args.command {
+        assert!(prepreocess.threads != 0);
+    }
+
+    let archdef_msg = ic_loader::open(
+        Path::new(&args.device), 
+        OpenOpts { raw: args.raw }
+    ).expect("Couldn't open device file");
+    
+    let device = archdef_msg.get_archdef_root()
+        .expect("Device file does not contain a valid root structure");
+    
+    match args.command {
+        SubCommands::Preprocess(sargs) => preprocess(sargs, device),
+        SubCommands::RoutePair(sargs) => route_pair(sargs, device),
     }
 }

@@ -24,6 +24,7 @@ use crate::logic_formula::*;
 use lazy_static::__Deref;
 use replace_with::replace_with_or_abort;
 use std::thread;
+use std::sync::{Arc, Mutex};
 use crate::log::*;
 use crate::ic_loader::archdef::Root as Device;
 use serde::{Serialize, Deserialize};
@@ -170,15 +171,22 @@ impl RoutingGraph {
  * and constraint activators, but later it it might prove to be useful to 
  * have two different enums for activators and requirements. */
 #[derive(PartialOrd, PartialEq, Ord, Eq, Clone, Debug, Serialize, Deserialize)]
-enum ConstrainingElement {
+pub enum ConstrainingElement {
     Port(u32),
 }
 
-struct PortToPortRouter<'g> {
+pub struct PortToPortRouterFrame<A> {
+    pub prev_node: Option<PinId>,
+    pub node: PinId,
+    pub accumulator: A
+}
+
+struct PortToPortRouter<'g, A> where A: Default + Clone + 'static {
     graph: &'g RoutingGraph,
-    from: usize,
+    from: PinId,
     markers: Vec<PTPRMarker>,
-    queue: VecDeque<(Option<usize>, usize)>,
+    queue: VecDeque<PortToPortRouterFrame<A>>,
+    callback: &'g Option<BruteRouterCallback<A>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -187,8 +195,12 @@ struct PTPRMarker {
     activated: DNFForm<ConstrainingElement>,
 }
 
-impl<'g> PortToPortRouter<'g> {
-    fn new(graph: &'g RoutingGraph, from: usize) -> Self {
+impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + 'static {
+    fn new(
+        graph: &'g RoutingGraph,
+        from: PinId,
+        callback: &'g Option<BruteRouterCallback<A>>
+    ) -> Self {
         Self {
             graph,
             from,
@@ -199,48 +211,65 @@ impl<'g> PortToPortRouter<'g> {
                 }
             }).collect(),
             queue: VecDeque::new(),
+            callback,
         }
     }
 
-    fn routing_step(&mut self) -> Option<usize> {
-        let (previous_node, current_node) = self.queue.pop_front()?;
+    fn routing_step(&mut self) -> Option<PinId> {
+        let frame = self.queue.pop_front()?;
 
-        self.scan_and_add_constraint_requirements(current_node, previous_node);
-        self.scan_and_add_constraint_activators(current_node, previous_node);
+        /* Callbacks for debugging */
+        let (mut add_creq_cb, mut add_cact_cb, new_acc) =
+            self.callback.as_ref().map(|callback| {
+                let mut cb = callback.deref().lock().unwrap();
+                cb(&frame)
+            }).unwrap_or((None, None, frame.accumulator));
+
+        self.scan_and_add_constraint_requirements(frame.node, frame.prev_node);
+        self.scan_and_add_constraint_activators(frame.node, frame.prev_node);
         
-        for next in self.graph.edges_from(current_node) {
+        for next in self.graph.edges_from(frame.node.0) {
             let is_subformular = {
-                let my_constr = &self.markers[current_node].constraints;
+                let my_constr = &self.markers[frame.node.0].constraints;
                 let next_constr = &self.markers[next].constraints;
                 my_constr.is_subformula_of(next_constr)
             };
             
             if !is_subformular {
-                let my_constr = self.markers[current_node].constraints.clone();
-                let my_activated = self.markers[current_node].activated.clone();
+                let my_constr = self.markers[frame.node.0].constraints.clone();
+                let my_activated = self.markers[frame.node.0].activated.clone();
+
+                /* Callbacks for debugging */
+                add_creq_cb.as_mut().map(|cb| cb(my_constr.clone()));
+                add_cact_cb.as_mut().map(|cb| cb(my_activated.clone()));
+
                 replace_with_or_abort(&mut self.markers[next].constraints, |c| {
                     c.disjunct(my_constr)
                 });
                 replace_with_or_abort(&mut self.markers[next].activated, |c| {
                     c.disjunct(my_activated)
                 });
-                self.queue.push_back((Some(current_node), next));
+                self.queue.push_back(PortToPortRouterFrame {
+                    prev_node: Some(frame.node),
+                    node: PinId(next),
+                    accumulator: new_acc.clone(),
+                });
             }
         }
 
-        Some(current_node)
+        Some(frame.node)
     }
 
     fn scan_and_add_constraint_requirements(
         &mut self,
-        node: usize, 
-        previous: Option<usize>
+        node: PinId, 
+        previous: Option<PinId>
     ) {
         if let Some(prev) = previous {
             /* Add constraints for no multiple drivers */
-            for driver in self.graph.edges_to(node) {
-                if driver == prev { continue; }
-                replace_with_or_abort(&mut self.markers[node].constraints, |c| {
+            for driver in self.graph.edges_to(node.0) {
+                if driver == prev.0 { continue; }
+                replace_with_or_abort(&mut self.markers[node.0].constraints, |c| {
                     /* XXX: Last cube must've been added by us, so we won't modify
                      * constraints for different routes. */
                     c.conjunct_term_with_last(
@@ -253,28 +282,28 @@ impl<'g> PortToPortRouter<'g> {
         dbg_log!(
             DBG_EXTRA1,
             "Added constraints for node {}. Current status: {:?}",
-            node,
-            self.markers[node].constraints
+            node.0,
+            self.markers[node.0].constraints
         );
     }
 
     fn scan_and_add_constraint_activators(
         &mut self,
-        node: usize, 
-        previous: Option<usize>
+        node: PinId, 
+        previous: Option<PinId>
     ) {
         if let Some(previous) = previous  {
             let mut must_activate_driver = false;
-            for pnode in self.graph.edges_to(node) {
-                if pnode != previous {
+            for pnode in self.graph.edges_to(node.0) {
+                if pnode != previous.0 {
                     must_activate_driver = true;
                     break;
                 }
             }
             if must_activate_driver {
-                replace_with_or_abort(&mut self.markers[node].activated, |a|
+                replace_with_or_abort(&mut self.markers[node.0].activated, |a|
                     a.conjunct_term_with_last(
-                        FormulaTerm::Var(ConstrainingElement::Port(previous as u32))
+                        FormulaTerm::Var(ConstrainingElement::Port(previous.0 as u32))
                     )
                 );
             }
@@ -292,10 +321,14 @@ impl<'g> PortToPortRouter<'g> {
         #[cfg(debug_assertions)]
         if let Some(ref mut counter) = step_counter { **counter = 0 };
 
-        self.init_constraints_and_activators(self.from);
+        self.init_constraints_and_activators(self.from.0);
 
         self.queue.clear();
-        self.queue.push_back((None, self.from));
+        self.queue.push_back(PortToPortRouterFrame {
+            prev_node: None,
+            node: self.from,
+            accumulator: Default::default(),
+        });
         loop {
             #[cfg(debug_assertions)]
             if let Some(ref mut counter) = step_counter { **counter += 1 };
@@ -305,18 +338,29 @@ impl<'g> PortToPortRouter<'g> {
     }
 }
 
-pub struct BruteRouter<'a> {
-    tt: crate::ic_loader::archdef::TileTypeReader<'a>,
+pub type BruteRouterCallback<A> = 
+    Arc<Mutex<Box<dyn FnMut(&PortToPortRouterFrame<A>)
+        -> (
+            Option<Box<dyn FnMut(DNFForm<ConstrainingElement>) + Send + 'static>>,
+            Option<Box<dyn FnMut(DNFForm<ConstrainingElement>) + Send + 'static>>,
+            A
+        ) + Send
+    >>>;
+
+pub struct BruteRouter<A> {
+    tt_id: u32,
     bels: Vec<BELInfo>,
     tile_belpin_idx_to_bel_pin: Vec<(usize, usize)>,
     graph: RoutingGraph,
+    callback: Option<BruteRouterCallback<A>>,
 }
 
-impl<'a> BruteRouter<'a> {
-    pub fn new(
-        device: &'a Device<'a>,
-        tt: &crate::ic_loader::archdef::TileTypeReader<'a>,
-    ) -> Self {
+#[derive(Copy, Clone, Serialize, Debug, Hash, PartialEq, Eq)]
+pub struct PinId(usize);
+
+impl<A> BruteRouter<A> where A: Default + Clone + 'static {
+    pub fn new<'a>(device: &'a Device<'a>, tt_id: u32) -> Self {
+        let tt = device.get_tile_type_list().unwrap().get(tt_id);
 
         /* Create mappings between elements and indices */
         let bels = gather_bels_in_tile_type(&device, &tt);
@@ -359,7 +403,7 @@ impl<'a> BruteRouter<'a> {
 
         let graph = Self::create_routing_graph(
             device,
-            tt,
+            &tt,
             &bels,
             &bel_name_to_bel_idx,
             &tile_belpin_idx
@@ -368,14 +412,29 @@ impl<'a> BruteRouter<'a> {
         assert_eq!(tile_belpin_idx_to_bel_pin.len(), graph.nodes.len());
 
         Self {
-            tt: tt.clone(),
+            tt_id,
             bels,
             tile_belpin_idx_to_bel_pin,
             graph,
+            callback: None,
         }
     }
 
-    fn create_routing_graph(
+    pub fn with_callback<F>(self, callback: F) -> Self where 
+        F: FnMut(&PortToPortRouterFrame<A>)
+            -> (
+                Option<Box<dyn FnMut(DNFForm<ConstrainingElement>) + Send>>,
+                Option<Box<dyn FnMut(DNFForm<ConstrainingElement>) + Send>>,
+                A
+            ) + Send + 'static
+    {
+        Self {
+            callback: Some(Arc::new(Mutex::new(Box::new(callback)))),
+            .. self
+        }
+    }
+
+    fn create_routing_graph<'a>(
         device: &'a Device<'a>,
         tt: &crate::ic_loader::archdef::TileTypeReader<'a>,
         bels: &[BELInfo],
@@ -510,13 +569,100 @@ impl<'a> BruteRouter<'a> {
         graph
     }
 
-    fn route_pins(
-        graph: &RoutingGraph,
-        from: usize,
+    pub fn get_pin_id<'d>(
+        &self,
+        device: &Device<'d>,
+        site_name: &str,
+        bel_name: &str,
+        pin_name: &str
+    )
+        -> Result<PinId, String>
+    {
+        let tt = device.get_tile_type_list().unwrap().get(self.tt_id);
+        
+        let st_list = device.get_site_type_list().unwrap();
+
+        let (stitt_id, _, st_instance_name) = tt.get_site_types().unwrap().iter()
+            .enumerate()
+            .find_map(|(stitt_id, stitt)| {
+                let st = st_list.get(stitt.get_primary_type());
+                let st_instance_name =
+                    format!("{}_{}", device.ic_str(st.get_name()).unwrap(), stitt_id);
+                if st_instance_name == site_name {
+                    return Some((stitt_id, stitt, st_instance_name));
+                }
+                None
+            })
+            .ok_or_else(|| format!(
+                "Site {}/{} not found",
+                device.ic_str(tt.get_name()).unwrap(),
+                site_name)
+            )?;
+        
+        let mut bel_found = None;
+        (0 .. self.graph.nodes.len())
+            .find(|belpin_id| {
+                let (bel_id, bel_pin_id) = self.tile_belpin_idx_to_bel_pin[*belpin_id];
+                if device.ic_str(self.bels[bel_id].name).unwrap() == bel_name {
+                    bel_found = Some(bel_id);
+                } else {
+                    return false;
+                } 
+                let c_pin_name = self.bels[bel_id].pins[bel_pin_id].name;
+                if self.bels[bel_id].site_type_idx != stitt_id as u32 { return false; }
+                if device.ic_str(c_pin_name).unwrap() != pin_name { return false; }
+                true
+            }).ok_or_else(|| match bel_found {
+                    Some(bel_id) => format!(
+                        "Pin {}/{}/{}.{} not found",
+                        device.ic_str(tt.get_name()).unwrap(),
+                        st_instance_name,
+                        device.ic_str(self.bels[bel_id].name).unwrap(),
+                        pin_name
+                    ),
+                    None => format!(
+                        "BEL {}/{}/{} not found",
+                        device.ic_str(tt.get_name()).unwrap(),
+                        st_instance_name, 
+                        bel_name
+                    ),
+                }
+            )
+            .map(PinId)
+    }
+
+    pub fn get_pin_name<'d>(&self, device: &Device<'d>, pin_id: PinId)
+        -> (String, &'d str, &'d str)
+    {
+        let tt = device.get_tile_type_list().unwrap().get(self.tt_id);
+        let st_list = device.get_site_type_list().unwrap();
+        let stitt_list = tt.get_site_types().unwrap();
+
+        let (bel_id, bel_pin_id) = self.tile_belpin_idx_to_bel_pin[pin_id.0];
+        let bel_name = device.ic_str(self.bels[bel_id].name).unwrap();
+        let pin_name = device.ic_str(self.bels[bel_id].pins[bel_pin_id].name).unwrap();
+        let stitt_id = self.bels[bel_id].site_type_idx;
+        let stitt = stitt_list.get(stitt_id);
+        let st = st_list.get(stitt.get_primary_type());
+
+        let site_instance_name = format!(
+            "{}_{}",
+            device.ic_str(st.get_name()).unwrap(),
+            stitt_id
+        );
+
+        return (site_instance_name, bel_name, pin_name);
+    }
+
+    pub fn route_pins(
+        &self,
+        from: PinId,
         step_counter: Option<&mut usize>, /* Can be used only in debug build */
         optimize: bool
-    ) -> impl Iterator<Item = PinPairRoutingInfo> {
-        let router = PortToPortRouter::new(graph, from);
+    )
+        -> impl Iterator<Item = PinPairRoutingInfo>
+    {
+        let router = PortToPortRouter::<A>::new(&self.graph, from, &self.callback);
         router.route_all(step_counter)
             .into_iter()
             .map(move |mut marker| {
@@ -528,23 +674,23 @@ impl<'a> BruteRouter<'a> {
             .map(Into::into)
     }
 
-    fn route_range(graph: &RoutingGraph, range: std::ops::Range<usize>, optimize: bool)
+    fn route_range(&self, range: std::ops::Range<usize>, optimize: bool)
         -> HashMap<(usize, usize), PinPairRoutingInfo>
     {
-        let pin_cnt = graph.nodes.len();
+        let pin_cnt = self.graph.nodes.len();
         debug_assert!(range.start < range.end);
         debug_assert!(range.start <= pin_cnt);
         debug_assert!(range.end <= range.end);
 
         let mut pin_to_pin_map = HashMap::new();
         for from in range {
-            if let PinDir::Input = graph.get_node(from).dir {
+            if let PinDir::Input = self.graph.get_node(from).dir {
                 continue; /* We don't need routing information for input pins */
             }
             dbg_log!(DBG_INFO, "Routing from pin {}/{}", from, pin_cnt);
             let mut step_counter = 0;
             let routing_results =
-                Self::route_pins(graph, from, Some(&mut step_counter), optimize);
+                self.route_pins(PinId(from), Some(&mut step_counter), optimize);
             dbg_log!(DBG_INFO, "  Number of steps: {}", step_counter);
             for (to, routing_info) in routing_results.enumerate() {
                 if (routing_info.requires.len() != 0) || (routing_info.implies.len() != 0) {
@@ -555,24 +701,21 @@ impl<'a> BruteRouter<'a> {
         pin_to_pin_map
     }
 
-    fn gather_out_of_site_info(
-        graph: &RoutingGraph,
-        map: &HashMap<(usize, usize), PinPairRoutingInfo>
-    )
+    fn gather_out_of_site_info(&self, map: &HashMap<(usize, usize), PinPairRoutingInfo>)
         -> (HashMap<usize, Vec<usize>>, HashMap<usize, Vec<usize>>)
     {
         let mut out_of_site_sources = HashMap::new();
         let mut out_of_site_sinks = HashMap::new();
 
         for ((from, to), _) in map {
-            let from_node = graph.get_node(*from);
+            let from_node = self.graph.get_node(*from);
             if let PinDir::Output | PinDir::Inout = from_node.dir {
                 if let RoutingGraphNodeKind::SitePort(_) = from_node.kind {
                     out_of_site_sources.entry(*to).or_insert_with(Vec::new).push(*from);
                 }
             }
 
-            let to_node = graph.get_node(*to);
+            let to_node = self.graph.get_node(*to);
             if let PinDir::Input | PinDir::Inout = to_node.dir {
                 if let RoutingGraphNodeKind::SitePort(_) = to_node.kind {
                     out_of_site_sinks.entry(*from).or_insert_with(Vec::new).push(*to);
@@ -584,15 +727,13 @@ impl<'a> BruteRouter<'a> {
     }
 
     pub fn route_all(self, optimize: bool) -> RoutingInfo {
-        let map = Self::route_range(
-            &self.graph,
+        let map = self.route_range(
             0 .. self.tile_belpin_idx_to_bel_pin.len(),
             optimize
         );
 
         let (out_of_site_sources, out_of_site_sinks) =
-            Self::gather_out_of_site_info(&self.graph, &map);
-
+            self.gather_out_of_site_info(&map);
 
         RoutingInfo {
             pin_to_pin_routing: map,
@@ -605,19 +746,16 @@ impl<'a> BruteRouter<'a> {
     pub fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
         -> RoutingInfo
     {
-        use std::sync::Arc;
-
         let mut total_map = HashMap::new();
         let mut handles = Vec::new();
         
         let pin_cnt = self.tile_belpin_idx_to_bel_pin.len();
 
-        let graph = Arc::new(self.graph);
+        let me = Arc::new(self);
         for range in split_range_nicely(0 .. pin_cnt, thread_count) {
-            let graph = Arc::clone(&graph);
+            let me = Arc::clone(&me);
             let handle = thread::spawn(move || {
-                let graph = graph.deref();
-                Self::route_range(graph, range, optimize)
+                me.route_range(range, optimize)
             });
             handles.push(handle);
         }
@@ -627,7 +765,7 @@ impl<'a> BruteRouter<'a> {
         }
 
         let (out_of_site_sources, out_of_site_sinks) =
-            Self::gather_out_of_site_info(&*graph, &total_map);
+            me.gather_out_of_site_info(&total_map);
 
         RoutingInfo {
             pin_to_pin_routing: total_map,
@@ -636,19 +774,19 @@ impl<'a> BruteRouter<'a> {
         }
     }
 
-    pub fn create_dot_exporter<'s: 'a>(&'s self)
+    pub fn create_dot_exporter<'s>(&'s self, device: &Device<'s>)
         -> SiteRoutingGraphDotExporter<
             &'s RoutingGraph,
             &'s Vec<BELInfo>,
             &'s Vec<(usize, usize)>,
-            &'s crate::ic_loader::archdef::TileTypeReader<'a>
+            crate::ic_loader::archdef::TileTypeReader<'s>
            >
         {
         SiteRoutingGraphDotExporter::new(
             &self.graph,
             &self.bels,
             &self.tile_belpin_idx_to_bel_pin,
-            &self.tt
+            device.get_tile_type_list().unwrap().get(self.tt_id)
         )
     }
 }

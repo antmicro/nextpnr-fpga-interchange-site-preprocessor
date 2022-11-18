@@ -25,8 +25,9 @@ fi
 DOTS_DIR=dots
 JSONS_DIR=jsons
 THREADS=`nproc`
-COMMON_OPTIONS="--threads $THREADS --json-prefix $JSONS_DIR --json :all --dot-prefix $DOTS_DIR --dot :all"
-DEBUG_OPTIONS="--raw"
+COMMON_PREPROCESS_OPTIONS="--threads $THREADS --json-prefix $JSONS_DIR --json :all --dot-prefix $DOTS_DIR --dot :all"
+DEBUG_GLOBAL_OPTIONS="--raw"
+RELEASE_GLOBAL_OPTIONS=""
 BUILD_TYPE=$1
 DEVICE=$2
 
@@ -36,9 +37,9 @@ mkdir -p $JSONS_DIR
 export RUST_BACKTRACE=1
 
 if [[ "$1" = "debug" ]]; then
-    $NISP_PATH ${DEVICE}/${DEVICE}.device.raw ${DEVICE}_nisp.bba $DEBUG_OPTIONS $COMMON_OPTIONS
+    $NISP_PATH ${DEVICE}/${DEVICE}.device.raw ${DEVICE}_nisp.bba $DEBUG_GLOBAL_OPTIONS preprocess $COMMON_PREPROCESS_OPTIONS
 elif [[ "$1" = "release" ]]; then
-    $NISP_PATH ${DEVICE}/${DEVICE}.device ${DEVICE}_nisp.bba $COMMON_OPTIONS
+    $NISP_PATH ${DEVICE}/${DEVICE}.device ${DEVICE}_nisp.bba $RELEASE_GLOBAL_OPTIONS preprocess $COMMON_PREPROCESS_OPTIONS
 else
     echo "Invalid build type!"
     exit -1
