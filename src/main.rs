@@ -126,9 +126,10 @@ enum SubCommands {
 }
 
 fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
-    let tile_types: Vec<_> = device.reborrow().get_tile_type_list().unwrap()
+    let tile_types: Vec<_> = device.get_tile_type_list().unwrap()
         .into_iter()
-        .filter(|tt| {
+        .enumerate()
+        .filter(|(_, tt)| {
             match &args.tile_types {
                 Some(accepted_tile_types) => {
                     accepted_tile_types.iter()
@@ -159,8 +160,8 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
             format!("{}_site_routability.json", device.get_name().unwrap())
         )
     );
-    
-    for (tt_id, tt) in tile_types.iter().enumerate() {
+
+    for (tt_id, tt) in tile_types {
         let tile_name = device.ic_str(tt.get_name()).unwrap();
         dbg_log!(DBG_INFO, "Processing tile {}", tile_name);
         let brouter = BruteRouter::<()>::new(&device, tt_id as u32);
@@ -192,10 +193,10 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
 
         if args.with_debug_hints {
             debug_json_exporter.ignore_or_export(&tile_name, ||
-                Box::new(routing_info.with_debug_info(brouter, &device))
+                routing_info.with_debug_info(brouter, &device)
             ).unwrap();
         } else {
-            json_exporter.ignore_or_export(&tile_name, || Box::new(routing_info))
+            json_exporter.ignore_or_export(&tile_name, || routing_info)
                 .unwrap();
         }
     }
