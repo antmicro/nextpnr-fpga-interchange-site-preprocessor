@@ -6,7 +6,7 @@
 
 The tool is a simple pin-to-pin site router which gathers information about routability
 between pairs of pins within site. The most basic information is whether a possible
-route between two given pins exists, but NISP can also gather constraints erquired for the
+route between two given pins exists, but NISP can also gather constraints required for the
 routes and can account for alternative routes between pins.
 
 The goal of this tool is to create a sort-of cache with routability data for a given
@@ -66,7 +66,7 @@ any prefix directories you specify on its own.
 ### `preprocess` subcommand
 
 Gathers information for routability between BEL pins in a site.
-Use `--with-debug-hints` to add hints to the outputted JSNO that make it easier to read by
+Use `--with-debug-hints` to add hints to the outputted JSON that make it easier to read by
 a human.
 
 ### `route-pair` subcommand
