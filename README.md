@@ -66,6 +66,8 @@ any prefix directories you specify on its own.
 ### `preprocess` subcommand
 
 Gathers information for routability between BEL pins in a site.
+Use `--with-debug-hints` to add hints to the outputted JSNO that make it easier to read by
+a human.
 
 ### `route-pair` subcommand
 
