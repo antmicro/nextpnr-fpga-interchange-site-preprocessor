@@ -14,6 +14,7 @@
  */
 
 
+use std::borrow::Borrow;
 use core::panic;
 use std::collections::{HashMap, VecDeque};
 use crate::common::{
@@ -25,6 +26,7 @@ use lazy_static::__Deref;
 use replace_with::replace_with_or_abort;
 use std::thread;
 use std::sync::{Arc, Mutex};
+#[allow(unused)]
 use crate::log::*;
 use crate::ic_loader::archdef::Root as Device;
 use serde::{Serialize, Deserialize};
@@ -33,8 +35,8 @@ use super::*;
 
 #[derive(Serialize)]
 pub struct PinPairRoutingInfo {
-    requires: Vec<DNFCube<ConstrainingElement>>,
-    implies: Vec<DNFCube<ConstrainingElement>>,
+    pub requires: Vec<DNFCube<ConstrainingElement>>,
+    pub implies: Vec<DNFCube<ConstrainingElement>>,
 }
 
 impl PinPairRoutingInfo {
@@ -63,8 +65,8 @@ impl From<PTPRMarker> for PinPairRoutingInfo {
     }
 }
 
-pub struct RoutingInfo {
-    pub pin_to_pin_routing: HashMap<(usize, usize), PinPairRoutingInfo>,
+pub struct RoutingInfo<P> {
+    pub pin_to_pin_routing: HashMap<(usize, usize), P>,
     pub out_of_site_sources: HashMap<usize, Vec<usize>>,
     pub out_of_site_sinks: HashMap<usize, Vec<usize>>,
 }
@@ -176,14 +178,14 @@ pub enum ConstrainingElement {
 }
 
 pub struct PortToPortRouterFrame<A> {
-    pub prev_node: Option<PinId>,
-    pub node: PinId,
+    pub prev_node: Option<TilePinId>,
+    pub node: TilePinId,
     pub accumulator: A
 }
 
 struct PortToPortRouter<'g, A> where A: Default + Clone + 'static {
     graph: &'g RoutingGraph,
-    from: PinId,
+    from: TilePinId,
     markers: Vec<PTPRMarker>,
     queue: VecDeque<PortToPortRouterFrame<A>>,
     callback: &'g Option<BruteRouterCallback<A>>,
@@ -198,7 +200,7 @@ struct PTPRMarker {
 impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + 'static {
     fn new(
         graph: &'g RoutingGraph,
-        from: PinId,
+        from: TilePinId,
         callback: &'g Option<BruteRouterCallback<A>>
     ) -> Self {
         Self {
@@ -215,7 +217,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + 'static {
         }
     }
 
-    fn routing_step(&mut self) -> Option<PinId> {
+    fn routing_step(&mut self) -> Option<TilePinId> {
         let frame = self.queue.pop_front()?;
 
         /* Callbacks for debugging */
@@ -251,7 +253,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + 'static {
                 });
                 self.queue.push_back(PortToPortRouterFrame {
                     prev_node: Some(frame.node),
-                    node: PinId(next),
+                    node: TilePinId(next),
                     accumulator: new_acc.clone(),
                 });
             }
@@ -262,8 +264,8 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + 'static {
 
     fn scan_and_add_constraint_requirements(
         &mut self,
-        node: PinId, 
-        previous: Option<PinId>
+        node: TilePinId, 
+        previous: Option<TilePinId>
     ) {
         if let Some(prev) = previous {
             /* Add constraints for no multiple drivers */
@@ -289,8 +291,8 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + 'static {
 
     fn scan_and_add_constraint_activators(
         &mut self,
-        node: PinId, 
-        previous: Option<PinId>
+        node: TilePinId, 
+        previous: Option<TilePinId>
     ) {
         if let Some(previous) = previous  {
             let mut must_activate_driver = false;
@@ -354,9 +356,6 @@ pub struct BruteRouter<A> {
     graph: RoutingGraph,
     callback: Option<BruteRouterCallback<A>>,
 }
-
-#[derive(Copy, Clone, Serialize, Debug, Hash, PartialEq, Eq)]
-pub struct PinId(usize);
 
 impl<A> BruteRouter<A> where A: Default + Clone + 'static {
     pub fn new<'a>(device: &'a Device<'a>, tt_id: u32) -> Self {
@@ -576,7 +575,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + 'static {
         bel_name: &str,
         pin_name: &str
     )
-        -> Result<PinId, String>
+        -> Result<TilePinId, String>
     {
         let tt = device.get_tile_type_list().unwrap().get(self.tt_id);
         
@@ -628,35 +627,35 @@ impl<A> BruteRouter<A> where A: Default + Clone + 'static {
                     ),
                 }
             )
-            .map(PinId)
+            .map(TilePinId)
     }
 
-    pub fn get_pin_name<'d>(&self, device: &Device<'d>, pin_id: PinId)
-        -> (String, &'d str, &'d str)
+    pub fn get_pin_name<'d>(&self, device: &Device<'d>, pin_id: TilePinId)
+        -> TilePinName<'static, 'd, 'd, String, &'d str, &'d str>
     {
         let tt = device.get_tile_type_list().unwrap().get(self.tt_id);
         let st_list = device.get_site_type_list().unwrap();
         let stitt_list = tt.get_site_types().unwrap();
 
         let (bel_id, bel_pin_id) = self.tile_belpin_idx_to_bel_pin[pin_id.0];
-        let bel_name = device.ic_str(self.bels[bel_id].name).unwrap();
-        let pin_name = device.ic_str(self.bels[bel_id].pins[bel_pin_id].name).unwrap();
+        let bel = device.ic_str(self.bels[bel_id].name).unwrap();
+        let pin = device.ic_str(self.bels[bel_id].pins[bel_pin_id].name).unwrap();
         let stitt_id = self.bels[bel_id].site_type_idx;
         let stitt = stitt_list.get(stitt_id);
         let st = st_list.get(stitt.get_primary_type());
 
-        let site_instance_name = format!(
+        let site_instance = format!(
             "{}_{}",
             device.ic_str(st.get_name()).unwrap(),
             stitt_id
         );
 
-        return (site_instance_name, bel_name, pin_name);
+        return TilePinName::new(site_instance, bel, pin)
     }
 
     pub fn route_pins(
         &self,
-        from: PinId,
+        from: TilePinId,
         step_counter: Option<&mut usize>, /* Can be used only in debug build */
         optimize: bool
     )
@@ -690,7 +689,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + 'static {
             dbg_log!(DBG_INFO, "Routing from pin {}/{}", from, pin_cnt);
             let mut step_counter = 0;
             let routing_results =
-                self.route_pins(PinId(from), Some(&mut step_counter), optimize);
+                self.route_pins(TilePinId(from), Some(&mut step_counter), optimize);
             dbg_log!(DBG_INFO, "  Number of steps: {}", step_counter);
             for (to, routing_info) in routing_results.enumerate() {
                 if (routing_info.requires.len() != 0) || (routing_info.implies.len() != 0) {
@@ -726,7 +725,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + 'static {
         (out_of_site_sources, out_of_site_sinks)
     }
 
-    pub fn route_all(self, optimize: bool) -> RoutingInfo {
+    pub fn route_all(&self, optimize: bool) -> RoutingInfo<PinPairRoutingInfo> {
         let map = self.route_range(
             0 .. self.tile_belpin_idx_to_bel_pin.len(),
             optimize
@@ -737,38 +736,6 @@ impl<A> BruteRouter<A> where A: Default + Clone + 'static {
 
         RoutingInfo {
             pin_to_pin_routing: map,
-            out_of_site_sources,
-            out_of_site_sinks,
-        }
-    }
-
-    /* Not the best multithreading, but should improve the runtime nevertheless. */
-    pub fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
-        -> RoutingInfo
-    {
-        let mut total_map = HashMap::new();
-        let mut handles = Vec::new();
-        
-        let pin_cnt = self.tile_belpin_idx_to_bel_pin.len();
-
-        let me = Arc::new(self);
-        for range in split_range_nicely(0 .. pin_cnt, thread_count) {
-            let me = Arc::clone(&me);
-            let handle = thread::spawn(move || {
-                me.route_range(range, optimize)
-            });
-            handles.push(handle);
-        }
-        for handle in handles {
-            let map = handle.join().unwrap();
-            total_map.extend(map.into_iter());
-        }
-
-        let (out_of_site_sources, out_of_site_sinks) =
-            me.gather_out_of_site_info(&total_map);
-
-        RoutingInfo {
-            pin_to_pin_routing: total_map,
             out_of_site_sources,
             out_of_site_sinks,
         }
@@ -788,5 +755,46 @@ impl<A> BruteRouter<A> where A: Default + Clone + 'static {
             &self.tile_belpin_idx_to_bel_pin,
             device.get_tile_type_list().unwrap().get(self.tt_id)
         )
+    }
+}
+
+pub trait MultiThreadedBruteRouter<A> {
+    fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
+        -> RoutingInfo<PinPairRoutingInfo>;
+}
+
+impl<R, A> MultiThreadedBruteRouter<A> for R
+where
+    R: Borrow<BruteRouter<A>> + Clone + Send + 'static,
+    A: Default + Clone + 'static {
+    /* Not the best multithreading, but should improve the runtime nevertheless. */
+    fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
+        -> RoutingInfo<PinPairRoutingInfo>
+    {
+        let mut total_map = HashMap::new();
+        let mut handles = Vec::new();
+        
+        let pin_cnt = self.borrow().tile_belpin_idx_to_bel_pin.len();
+
+        for range in split_range_nicely(0 .. pin_cnt, thread_count) {
+            let me = self.clone();
+            let handle = thread::spawn(move || {
+                me.borrow().route_range(range, optimize)
+            });
+            handles.push(handle);
+        }
+        for handle in handles {
+            let map = handle.join().unwrap();
+            total_map.extend(map.into_iter());
+        }
+
+        let (out_of_site_sources, out_of_site_sinks) =
+            self.borrow().gather_out_of_site_info(&total_map);
+
+        RoutingInfo {
+            pin_to_pin_routing: total_map,
+            out_of_site_sources,
+            out_of_site_sinks,
+        }
     }
 }

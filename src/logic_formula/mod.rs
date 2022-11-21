@@ -25,6 +25,7 @@ mod intersperse;
 mod tests;
 
 use self::intersperse::*;
+#[allow(unused)]
 use crate::log::*;
 
 #[derive(Serialize, Deserialize)]
@@ -514,6 +515,7 @@ impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
                 }
             }
             if let Some((new_cube, at, of)) = reduction {
+                #[allow(unused)]
                 { /* Literally just debug code */
                     let of_cube = if of < self.cubes.len() {
                         &self.cubes[of]

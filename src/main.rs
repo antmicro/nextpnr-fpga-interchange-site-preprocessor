@@ -15,8 +15,7 @@
 
 use clap::{arg, Parser};
 use lazy_static::__Deref;
-use crate::router::site_brute_router::PinId;
-use serde::Serialize;
+use crate::router::TilePinId;
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -38,10 +37,10 @@ pub mod exporter;
 pub mod dot_exporter;
 
 use crate::ic_loader::OpenOpts;
-use crate::router::site_brute_router::{
-    BruteRouter,
-    PinPairRoutingInfo
-};
+use crate::router::site_brute_router::BruteRouter;
+use crate::exporter::Exporter;
+use crate::router::serialize::*;
+#[allow(unused)]
 use crate::log::*;
 use crate::common::*;
 use crate::exporter::*;
@@ -90,6 +89,8 @@ struct PreprocessCmd {
     json_prefix: String,
     #[arg(long, help = "Do not optimize logic formulas for constraints")]
     no_formula_opt: bool,
+    #[arg(long, help = "Add debugging hints to the exported JSON")]
+    with_debug_hints: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -124,32 +125,6 @@ enum SubCommands {
     RoutePair(RoutePairCmd),
 }
 
-fn map_routing_map_to_serializable<'h>(
-    routing_map: &'h HashMap<(usize, usize), PinPairRoutingInfo>)
-    -> HashMap<String, &'h PinPairRoutingInfo>
-{
-    routing_map.iter()
-        .map(|(k, v)| (format!("{}->{}", k.0, k.1), v))
-        .collect()    
-}
-
-impl Serialize for router::site_brute_router::RoutingInfo {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
-        S: serde::Serializer
-    {
-        use serde::ser::SerializeStruct;
-
-        let mut s = serializer.serialize_struct("RoutingInfo", 3)?;
-        
-        let serializable_map = map_routing_map_to_serializable(&self.pin_to_pin_routing);
-        
-        s.serialize_field("pin_to_pin_routing", &serializable_map)?;
-        s.serialize_field("out_of_site_sources", &self.out_of_site_sources)?;
-        s.serialize_field("out_of_site_sinks", &self.out_of_site_sinks)?;
-        s.end()
-    }
-}
-
 fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
     let tile_types: Vec<_> = device.reborrow().get_tile_type_list().unwrap()
         .into_iter()
@@ -169,7 +144,16 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
     
     let mut dot_exporter =
         MultiFileExporter::new(&args.dot, args.dot_prefix.clone(), ".dot".into());
+    
+    /* Unfortunately, since serde::Serialize is not object-safe, we need separate
+     * exporters for different types. */
     let mut json_exporter = CompoundJsonExporter::new(
+        &args.json,
+        Path::new(&args.json_prefix).join(
+            format!("{}_site_routability.json", device.get_name().unwrap())
+        )
+    );
+    let mut debug_json_exporter = CompoundJsonExporter::new(
         &args.json,
         Path::new(&args.json_prefix).join(
             format!("{}_site_routability.json", device.get_name().unwrap())
@@ -185,10 +169,13 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
             brouter.create_dot_exporter(&device).export_dot(&device, &tile_name)
         }).unwrap();
 
+        let brouter = Arc::new(brouter);
         let routing_info = if args.threads == 1 {
-            brouter.route_all(!args.no_formula_opt)
+            brouter.as_ref().route_all(!args.no_formula_opt)
         } else {
-            brouter.route_all_multithreaded(args.threads, !args.no_formula_opt)
+            use crate::router::site_brute_router::MultiThreadedBruteRouter;
+            Arc::clone(&brouter)
+                .route_all_multithreaded(args.threads, !args.no_formula_opt)
         };
 
         println!(concat!(
@@ -203,11 +190,23 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
             routing_info.out_of_site_sinks.len()
         );
 
-        json_exporter.ignore_or_export(&tile_name, || routing_info).unwrap();
+        if args.with_debug_hints {
+            debug_json_exporter.ignore_or_export(&tile_name, ||
+                Box::new(routing_info.with_debug_info(brouter, &device))
+            ).unwrap();
+        } else {
+            json_exporter.ignore_or_export(&tile_name, || Box::new(routing_info))
+                .unwrap();
+        }
     }
-
+    
     <MultiFileExporter as Exporter<String>>::flush(&mut dot_exporter).unwrap();
-    json_exporter.flush().unwrap();
+
+    if args.with_debug_hints {
+        debug_json_exporter.flush().unwrap();
+    } else {
+        json_exporter.flush().unwrap();
+    }
 }
 
 fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
@@ -230,7 +229,7 @@ fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
     let routes = Arc::new(Mutex::new(Vec::new()));
     let routes_l = Arc::clone(&routes);
 
-    let brouter = BruteRouter::<Vec<PinId>>::new(&device, tt_id as u32);
+    let brouter = BruteRouter::<Vec<TilePinId>>::new(&device, tt_id as u32);
     
     let from = brouter.get_pin_id(&device, from_site, from_bel, from_pin)
         .expect("From pin does not exist!");
@@ -260,8 +259,7 @@ fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
     for (route_id, route) in routes_l.deref().lock().unwrap().deref().iter().enumerate() {
         println!("  Route #{}:", route_id);
         for pin in route {
-            let (site, bel, pin) = brouter.get_pin_name(&device, *pin);
-            println!("    {}/{}.{}", site, bel, pin);
+            println!("{}", brouter.get_pin_name(&device, *pin).to_string());
         }
     }
 

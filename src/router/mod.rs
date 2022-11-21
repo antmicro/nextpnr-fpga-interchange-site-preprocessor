@@ -13,9 +13,14 @@
  * limitations under the License.
  */
 
+use std::borrow::Borrow;
+use std::marker::PhantomData;
+
 use crate::ic_loader::archdef::Root as Device;
 
 pub mod site_brute_router;
+pub mod serialize;
+
 
 /* XXX: crate::ic_loader::LogicalNetlist_capnp::netlist::Direction doe not implement Hash */
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
@@ -100,4 +105,57 @@ fn gather_bels_in_tile_type<'a>(
         );
     }
     bels
+}
+
+#[derive(Serialize)]
+pub struct FullRoutingInfo<I> where I: serde::Serialize {
+    pub intra: I,
+}
+
+#[derive(Copy, Clone, Serialize, Debug, Hash, PartialEq, Eq)]
+pub struct TilePinId(usize);
+
+pub struct TilePinName<'t, 'b, 'p, S, B, P> where
+    S: Borrow<str> + 't,
+    B: Borrow<str> + 'b,
+    P: Borrow<str> + 'p,
+{
+    site_instance: S,
+    bel: B,
+    pin: P,
+    _tile_lifetime: PhantomData<&'t ()>,
+    _bel_lifetime: PhantomData<&'b ()>,
+    _pin_lifetime: PhantomData<&'p ()>,
+}
+
+impl<'t, 'b, 'p, S, B, P>  TilePinName<'t, 'b, 'p, S, B, P> where
+    S: Borrow<str> + 't,
+    B: Borrow<str> + 'b,
+    P: Borrow<str> + 'p
+{
+    fn new(site_instance: S, bel: B, pin: P) -> Self {
+        Self {
+            site_instance,
+            bel,
+            pin,
+            _tile_lifetime: Default::default(),
+            _bel_lifetime: Default::default(),
+            _pin_lifetime: Default::default(),
+        }
+    }
+}
+
+impl<'t, 'b, 'p, S, B, P> ToString for TilePinName<'t, 'b, 'p, S, B, P> where
+    S: Borrow<str> + 't,
+    B: Borrow<str> + 'b,
+    P: Borrow<str> + 'p
+{
+    fn to_string(&self) -> String {
+        format!(
+            "{}/{}.{}",
+            self.site_instance.borrow(),
+            self.bel.borrow(),
+            self.pin.borrow()
+        )
+    }
 }
