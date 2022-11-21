@@ -87,7 +87,7 @@ impl ConstrainingElementWithDebugInfo {
         -> Self
     where
         R: Borrow<site_brute_router::BruteRouter<A>>,
-        A: Default + Clone + 'static
+        A: Default + Clone + std::fmt::Debug + 'static
     {
         use site_brute_router::ConstrainingElement::*;
         match og {
@@ -117,7 +117,7 @@ impl PinPairRoutingInfoWithDebugInfo {
     ) -> Self
     where
         R: Borrow<site_brute_router::BruteRouter<A>>,
-        A: Default + Clone + 'static
+        A: Default + Clone + std::fmt::Debug + 'static
     {
         let from = brouter.borrow().get_pin_name(device, from).to_string();
         let to = brouter.borrow().get_pin_name(device, to).to_string();
@@ -148,7 +148,7 @@ pub trait RoutingInfoWithDebugInfo {
         -> site_brute_router::RoutingInfo<PinPairRoutingInfoWithDebugInfo>
     where
         R: Borrow<site_brute_router::BruteRouter<A>>,
-        A: Default + Clone + 'static;
+        A: Default + Clone + std::fmt::Debug + 'static;
 }
 
 impl RoutingInfoWithDebugInfo for 
@@ -160,7 +160,7 @@ impl RoutingInfoWithDebugInfo for
         -> site_brute_router::RoutingInfo<PinPairRoutingInfoWithDebugInfo>
     where
         R: Borrow<site_brute_router::BruteRouter<A>>,
-        A: Default + Clone + 'static
+        A: Default + Clone + std::fmt::Debug + 'static
     {
         site_brute_router::RoutingInfo {
             pin_to_pin_routing: self.pin_to_pin_routing.into_iter()

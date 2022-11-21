@@ -177,13 +177,14 @@ pub enum ConstrainingElement {
     Port(u32),
 }
 
+#[derive(Debug)]
 pub struct PortToPortRouterFrame<A> {
     pub prev_node: Option<TilePinId>,
     pub node: TilePinId,
     pub accumulator: A
 }
 
-struct PortToPortRouter<'g, A> where A: Default + Clone + 'static {
+struct PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug + 'static {
     graph: &'g RoutingGraph,
     from: TilePinId,
     markers: Vec<PTPRMarker>,
@@ -197,7 +198,7 @@ struct PTPRMarker {
     activated: DNFForm<ConstrainingElement>,
 }
 
-impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + 'static {
+impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug + 'static {
     fn new(
         graph: &'g RoutingGraph,
         from: TilePinId,
@@ -216,9 +217,11 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + 'static {
             callback,
         }
     }
-
+    
     fn routing_step(&mut self) -> Option<TilePinId> {
         let frame = self.queue.pop_front()?;
+
+        dbg_log!(DBG_EXTRA2, "(RS FRAME) {:?}", frame);
 
         /* Callbacks for debugging */
         let (mut add_creq_cb, mut add_cact_cb, new_acc) =
@@ -357,7 +360,7 @@ pub struct BruteRouter<A> {
     callback: Option<BruteRouterCallback<A>>,
 }
 
-impl<A> BruteRouter<A> where A: Default + Clone + 'static {
+impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
     pub fn new<'a>(device: &'a Device<'a>, tt_id: u32) -> Self {
         let tt = device.get_tile_type_list().unwrap().get(tt_id);
 
@@ -771,7 +774,7 @@ pub trait MultiThreadedBruteRouter<A> {
 impl<R, A> MultiThreadedBruteRouter<A> for R
 where
     R: Borrow<BruteRouter<A>> + Clone + Send + 'static,
-    A: Default + Clone + 'static {
+    A: Default + Clone + std::fmt::Debug + 'static {
     /* Not the best multithreading, but should improve the runtime nevertheless. */
     fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
         -> RoutingInfo<PinPairRoutingInfo<ConstrainingElement>>
