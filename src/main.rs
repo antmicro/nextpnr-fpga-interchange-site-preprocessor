@@ -259,7 +259,7 @@ fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
     for (route_id, route) in routes_l.deref().lock().unwrap().deref().iter().enumerate() {
         println!("  Route #{}:", route_id);
         for pin in route {
-            println!("{}", brouter.get_pin_name(&device, *pin).to_string());
+            println!("    {}", brouter.get_pin_name(&device, *pin).to_string());
         }
     }
 

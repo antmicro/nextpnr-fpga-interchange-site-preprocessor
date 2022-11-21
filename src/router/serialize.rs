@@ -73,6 +73,7 @@ where
 pub struct PinPairRoutingInfoWithDebugInfo {
     from: String,
     to: String,
+    search_id: String,
     ppri: site_brute_router::PinPairRoutingInfo
 }
 
@@ -88,9 +89,12 @@ impl PinPairRoutingInfoWithDebugInfo {
         R: Borrow<site_brute_router::BruteRouter<A>>,
         A: Default + Clone + 'static
     {
+        let from = brouter.borrow().get_pin_name(device, from).to_string();
+        let to = brouter.borrow().get_pin_name(device, to).to_string();
         Self {
-            from: brouter.borrow().get_pin_name(device, from).to_string(),
-            to: brouter.borrow().get_pin_name(device, to).to_string(),
+            search_id: format!("{}->{}", from, to),
+            from,
+            to,
             ppri
         }
     }
@@ -100,9 +104,10 @@ impl Serialize for PinPairRoutingInfoWithDebugInfo {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
         S: Serializer
     {
-        let mut s = serializer.serialize_struct("PinPairRoutingInfo", 5)?;
+        let mut s = serializer.serialize_struct("PinPairRoutingInfo", 6)?;
         s.serialize_field("from", &self.from)?;
         s.serialize_field("to", &self.to)?;
+        s.serialize_field("search_id", &self.search_id)?;
         serialize_standard_pin_pair_routing_info_fields(&self.ppri, &mut s)?;
         s.end()
     }
