@@ -174,6 +174,22 @@ impl<Id> DNFCube<Id> where Id: Ord + Eq {
         };
         self.terms.insert(idx, term);
     }
+
+    pub fn map<F, NId>(self, mut f: F) -> DNFCube<NId> where
+        F: FnMut(Id) -> NId,
+        NId: Ord + Eq
+    {
+        DNFCube {
+            terms: self.terms.into_iter().map(|t| {
+                match t {
+                    FormulaTerm::Var(v) => FormulaTerm::Var(f(v)),
+                    FormulaTerm::NegVar(v) => FormulaTerm::NegVar(f(v)),
+                    FormulaTerm::True => FormulaTerm::True,
+                    FormulaTerm::False => FormulaTerm::False,
+                }
+            }).collect()
+        }
+    }
 }
 
 pub trait ReductibleDNFCube<Id> where

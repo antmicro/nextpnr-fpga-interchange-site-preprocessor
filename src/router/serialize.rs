@@ -18,7 +18,6 @@ use serde::{Serialize, Serializer, ser::SerializeStruct};
 use std::collections::HashMap;
 use std::borrow::Borrow;
 use super::*;
-use super::site_brute_router::PinPairRoutingInfo;
 
 
 fn map_routing_map_to_serializable<'h, S>(
@@ -57,12 +56,13 @@ impl<P> Serialize for site_brute_router::RoutingInfo<P> where P: Serialize {
     }
 }
 
-fn serialize_standard_pin_pair_routing_info_fields<S>(
-    ppri: &site_brute_router::PinPairRoutingInfo,
+fn serialize_standard_pin_pair_routing_info_fields<S, C>(
+    ppri: &site_brute_router::PinPairRoutingInfo<C>,
     ser: &mut S,
 ) -> Result<(), S::Error>
 where
-    S: serde::ser::SerializeStruct
+    S: serde::ser::SerializeStruct,
+    C: Ord + Eq + Serialize
 {
     ser.serialize_field("requires", &ppri.requires)?;
     ser.serialize_field("implies", &ppri.implies)?;
@@ -70,16 +70,46 @@ where
     Ok(())
 }
 
+#[derive(PartialOrd, PartialEq, Ord, Eq, Clone, Debug, Serialize, Deserialize)]
+pub enum ConstrainingElementWithDebugInfo {
+    Port {
+        id: u32,
+        name: String,
+    },
+}
+
+impl ConstrainingElementWithDebugInfo {
+    fn new<'d, R, A>(
+        og: site_brute_router::ConstrainingElement,
+        brouter: R,
+        device: &Device<'d>
+    )
+        -> Self
+    where
+        R: Borrow<site_brute_router::BruteRouter<A>>,
+        A: Default + Clone + 'static
+    {
+        use site_brute_router::ConstrainingElement::*;
+        match og {
+            Port(id) => ConstrainingElementWithDebugInfo::Port {
+                id,
+                name: brouter.borrow().get_pin_name(device, TilePinId(id as usize))
+                    .to_string()
+            }
+        }
+    }
+}
+
 pub struct PinPairRoutingInfoWithDebugInfo {
     from: String,
     to: String,
     search_id: String,
-    ppri: site_brute_router::PinPairRoutingInfo
+    ppri: site_brute_router::PinPairRoutingInfo<ConstrainingElementWithDebugInfo>
 }
 
 impl PinPairRoutingInfoWithDebugInfo {
     pub fn from_ppri<'d, R, A>(
-        ppri: site_brute_router::PinPairRoutingInfo,
+        ppri: site_brute_router::PinPairRoutingInfo<ConstrainingElementWithDebugInfo>,
         brouter: R,
         from: TilePinId,
         to: TilePinId,
@@ -121,7 +151,11 @@ pub trait RoutingInfoWithDebugInfo {
         A: Default + Clone + 'static;
 }
 
-impl RoutingInfoWithDebugInfo for site_brute_router::RoutingInfo<PinPairRoutingInfo> {
+impl RoutingInfoWithDebugInfo for 
+    site_brute_router::RoutingInfo<
+        site_brute_router::PinPairRoutingInfo<site_brute_router::ConstrainingElement>
+    >
+{
     fn with_debug_info<'d, R, A>(self, brouter: R, device: &Device<'d>)
         -> site_brute_router::RoutingInfo<PinPairRoutingInfoWithDebugInfo>
     where
@@ -130,9 +164,29 @@ impl RoutingInfoWithDebugInfo for site_brute_router::RoutingInfo<PinPairRoutingI
     {
         site_brute_router::RoutingInfo {
             pin_to_pin_routing: self.pin_to_pin_routing.into_iter()
-                .map(|((from, to), v)| {
+                .map(|((from, to), ppri)| {
+                    let ppri = site_brute_router::PinPairRoutingInfo {
+                        requires: ppri.requires.into_iter().map(|cube| {
+                            cube.map(|c_elem| {
+                                ConstrainingElementWithDebugInfo::new(
+                                    c_elem,
+                                    brouter.borrow(),
+                                    device
+                                )
+                            })
+                        }).collect(),
+                        implies: ppri.implies.into_iter().map(|cube| {
+                            cube.map(|c_elem| {
+                                ConstrainingElementWithDebugInfo::new(
+                                    c_elem,
+                                    brouter.borrow(),
+                                    device
+                                )
+                            })
+                        }).collect(),
+                    };
                     ((from, to), PinPairRoutingInfoWithDebugInfo::from_ppri(
-                        v, brouter.borrow(), TilePinId(from), TilePinId(to), device)
+                        ppri, brouter.borrow(), TilePinId(from), TilePinId(to), device)
                     )
                 })
                 .collect(),
