@@ -180,6 +180,7 @@ pub enum ConstrainingElement {
 #[derive(Debug)]
 pub struct PortToPortRouterFrame<A> {
     pub prev_node: Option<TilePinId>,
+    pub past_constraint_cube_cnt: usize,
     pub node: TilePinId,
     pub accumulator: A
 }
@@ -230,8 +231,16 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
                 cb(&frame)
             }).unwrap_or((None, None, frame.accumulator));
 
-        self.scan_and_add_constraint_requirements(frame.node, frame.prev_node);
-        self.scan_and_add_constraint_activators(frame.node, frame.prev_node);
+        self.scan_and_add_constraint_requirements(
+            frame.node,
+            frame.prev_node,
+            frame.past_constraint_cube_cnt
+        );
+        self.scan_and_add_constraint_activators(
+            frame.node,
+            frame.prev_node,
+            frame.past_constraint_cube_cnt
+        );
         
         for next in self.graph.edges_from(frame.node.0) {
             let is_subformular = {
@@ -256,6 +265,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
                 });
                 self.queue.push_back(PortToPortRouterFrame {
                     prev_node: Some(frame.node),
+                    past_constraint_cube_cnt: self.markers[next].constraints.num_cubes(),
                     node: TilePinId(next),
                     accumulator: new_acc.clone(),
                 });
@@ -267,17 +277,20 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
 
     fn scan_and_add_constraint_requirements(
         &mut self,
-        node: TilePinId, 
-        previous: Option<TilePinId>
+        node: TilePinId,
+        prev_node: Option<TilePinId>,
+        past_constraint_cube_cnt: usize
     ) {
-        if let Some(prev) = previous {
+        if let Some(prev) = prev_node {
             /* Add constraints for no multiple drivers */
             for driver in self.graph.edges_to(node.0) {
                 if driver == prev.0 { continue; }
                 replace_with_or_abort(&mut self.markers[node.0].constraints, |c| {
-                    /* XXX: Last cube must've been added by us, so we won't modify
-                     * constraints for different routes. */
-                    c.conjunct_term_with_last(
+                    /* XXX: New cubes might've got added to the constraints.
+                     * It's important to add the constraints to the cube assocated
+                     * with the route this frame is a part of. */
+                    c.conjunct_term_with(
+                        past_constraint_cube_cnt - 1,
                         FormulaTerm::NegVar(ConstrainingElement::Port(driver as u32))
                     )
                 });
@@ -294,10 +307,11 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
 
     fn scan_and_add_constraint_activators(
         &mut self,
-        node: TilePinId, 
-        previous: Option<TilePinId>
+        node: TilePinId,
+        prev_node: Option<TilePinId>,
+        past_constraint_cube_cnt: usize
     ) {
-        if let Some(previous) = previous  {
+        if let Some(previous) = prev_node {
             let mut must_activate_driver = false;
             for pnode in self.graph.edges_to(node.0) {
                 if pnode != previous.0 {
@@ -307,7 +321,8 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
             }
             if must_activate_driver {
                 replace_with_or_abort(&mut self.markers[node.0].activated, |a|
-                    a.conjunct_term_with_last(
+                    a.conjunct_term_with(
+                        past_constraint_cube_cnt - 1,
                         FormulaTerm::Var(ConstrainingElement::Port(previous.0 as u32))
                     )
                 );
@@ -331,6 +346,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
         self.queue.clear();
         self.queue.push_back(PortToPortRouterFrame {
             prev_node: None,
+            past_constraint_cube_cnt: 0,
             node: self.from,
             accumulator: Default::default(),
         });
@@ -440,9 +456,10 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
         device: &'a Device<'a>,
         tt: &crate::ic_loader::archdef::TileTypeReader<'a>,
         bels: &[BELInfo],
-        bel_name_to_bel_idx: &HashMap<(u32, u32), usize>,
-        tile_belpin_idx: &HashMap<(usize, usize), usize>)
-    -> RoutingGraph
+        bel_name_to_bel_idx: &HashMap<(u32, u32), usize >,
+        tile_belpin_idx: &HashMap<(usize, usize), usize>
+    )
+        -> RoutingGraph
     {
         /* Create routing graph: conections between BELs */
         let mut graph = RoutingGraph::new(tile_belpin_idx.len());
@@ -774,7 +791,8 @@ pub trait MultiThreadedBruteRouter<A> {
 impl<R, A> MultiThreadedBruteRouter<A> for R
 where
     R: Borrow<BruteRouter<A>> + Clone + Send + 'static,
-    A: Default + Clone + std::fmt::Debug + 'static {
+    A: Default + Clone + std::fmt::Debug + 'static
+{
     /* Not the best multithreading, but should improve the runtime nevertheless. */
     fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
         -> RoutingInfo<PinPairRoutingInfo<ConstrainingElement>>

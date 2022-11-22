@@ -414,6 +414,10 @@ impl<Id> DNFForm<Id> where Id: Ord + Eq {
         }
         return true;
     }
+
+    pub fn num_cubes(&self) -> usize {
+        self.cubes.len()
+    }
 }
 
 pub trait MergableDNFForm<Id> where
@@ -426,7 +430,7 @@ pub trait MergableDNFForm<Id> where
     fn disjunct_opt(self, other: Self) -> Self;
     fn disjunct(self, other: Self) -> Self;
     fn conjunct_term(self, term: &FormulaTerm<Id>) -> Self;
-    fn conjunct_term_with_last(self, term: FormulaTerm<Id>) -> Self;
+    fn conjunct_term_with(self, at: usize, term: FormulaTerm<Id>) -> Self;
     fn optimize(self) -> Self;
 }
 
@@ -495,12 +499,12 @@ impl<Id> MergableDNFForm<Id> for DNFForm<Id> where
         self
     }
 
-    fn conjunct_term_with_last(mut self, term: FormulaTerm<Id>) -> Self {
-        if let Some(cube) = self.cubes.last_mut() {
+    fn conjunct_term_with(mut self, at: usize, term: FormulaTerm<Id>) -> Self {
+        if let Some(cube) = self.cubes.get_mut(at) {
             cube.add_term(term);
         } else {
             /* TODO: Should return Result instead */
-            panic!("No last cube to conjunct with");
+            panic!("Cube {} required for conjunction not found", at);
         }
         self
     }

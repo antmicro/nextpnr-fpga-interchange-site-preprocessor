@@ -263,8 +263,6 @@ fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
             println!("    {}", brouter.get_pin_name(&device, *pin).to_string());
         }
     }
-
-   /*  println!("Visited nodes: {:?}", rs.deref().lock().unwrap()); */
 }
 
 fn main() {
