@@ -37,7 +37,7 @@ pub enum FormulaTerm<Id> where Id: Ord + Eq {
 }
 
 impl<Id> FormulaTerm<Id> where Id: Ord + Eq {
-    /* Check if term is negation of the other term */
+    /// Check if term is negation of the other term
     pub fn neg_eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Var(a), Self::NegVar(b)) => a == b,
@@ -125,12 +125,12 @@ impl<Id> Clone for FormulaTerm<Id> where Id: Ord + Eq + Clone {
     }
 }
 
+/// Represents a conjunction group (aka. "cube") in DNF boolean formula
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DNFCube<Id> where Id: Ord + Eq {
     pub terms: Vec<FormulaTerm<Id>>
 }
 
-/* Represents a conjunction group ("cube") in DNF boolean formula */
 impl<Id> DNFCube<Id> where Id: Ord + Eq {
     pub fn new() -> Self {
         Self { terms: Vec::new() }
@@ -190,12 +190,21 @@ impl<Id> DNFCube<Id> where Id: Ord + Eq {
             }).collect()
         }
     }
+
+    /// Returns `true` if every interpretation that satisfies this cube
+    /// also satisfies the other cube. Otherwise, returns `false`.
+    pub fn is_subcube(&self, other: &Self) -> bool {
+        if other.terms.len() > self.terms.len() { return false; }
+        self.terms.iter().zip(other.terms.iter())
+            .find(|(my_term, other_term)| other_term < my_term)
+            .is_none()
+    }
 }
 
 pub trait ReductibleDNFCube<Id> where
     Self: Sized + std::fmt::Debug,
 {
-    /* Attempts to reduce disjunction of two cubes into a single cube */
+    /// Attempts to reduce disjunction of two cubes into a single cube
     fn try_to_reduce_disjunction(&self, other: &Self) -> Option<Self>;
 }
 
@@ -405,10 +414,17 @@ impl<Id> DNFForm<Id> where Id: Ord + Eq {
         Self { cubes: Vec::new() }
     }
 
+    /// Returns `true` if the `other` formula contains all the cubes that this formula
+    /// has. In other words, if there exisits interpretation that satisfies this formula,
+    /// but does not satisfy the other formula, this function will return `false`.
+    /// If the function returns `true`, every interpretation that satisfies this formula
+    /// will satisfy the other formula.
     pub fn is_subformula_of(&self, other: &Self) -> bool {
         'my_cube_loop: for cube in &self.cubes {
             for other_cube in &other.cubes {
-                if cube == other_cube { continue 'my_cube_loop; }
+                if cube.is_subcube(other_cube) {
+                    continue 'my_cube_loop;
+                }
             }
             return false;
         }

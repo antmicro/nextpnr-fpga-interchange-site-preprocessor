@@ -14,7 +14,7 @@
  */
 
 
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use core::panic;
 use std::collections::{HashMap, VecDeque};
 use crate::common::{
@@ -179,10 +179,13 @@ pub enum ConstrainingElement {
 
 #[derive(Debug)]
 pub struct PortToPortRouterFrame<A> {
+    #[cfg(debug_assertions)]
+    _step: usize,
     pub prev_node: Option<TilePinId>,
-    pub past_constraint_cube_cnt: usize,
     pub node: TilePinId,
-    pub accumulator: A
+    #[cfg(debug_assertions)]
+    _cube_count: usize,
+    pub accumulator: A,
 }
 
 struct PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug + 'static {
@@ -218,6 +221,26 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
             callback,
         }
     }
+
+    fn is_constr_subformular(&self, a: Option<TilePinId>, b: TilePinId) -> bool {
+        if let Some(TilePinId(a)) = a {
+            let my_form = &self.markers[a].constraints;
+            let other_form = &self.markers[b.0].constraints;
+            my_form.is_subformula_of(other_form)
+        } else {
+            true
+        }
+    }
+
+    fn is_activators_subformular(&self, a: Option<TilePinId>, b: TilePinId) -> bool {
+        if let Some(TilePinId(a)) = a {
+            let my_form = &self.markers[a].constraints;
+            let other_form = &self.markers[b.0].constraints;
+            my_form.is_subformula_of(other_form)
+        } else {
+            true
+        }
+    }
     
     fn routing_step(&mut self) -> Option<TilePinId> {
         let frame = self.queue.pop_front()?;
@@ -230,43 +253,65 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
                 let mut cb = callback.deref().lock().unwrap();
                 cb(&frame)
             }).unwrap_or((None, None, frame.accumulator));
+        
+        /* I hoped that Cow could be used to avoid making needless copies each iteration,
+         * but Cow has the dumbest ToOwned implmentation (blanket implmentation) */
+        let new_requirements = match frame.prev_node {
+            Some(prev) => self.markers[prev.0].constraints.clone(),
+            None => DNFForm::new()
+                .add_cube(DNFCube { terms: vec![FormulaTerm::True] }),
+        };
+        let new_requirements =
+            self.scan_constraint_requirements(frame.node, frame.prev_node)
+                .fold(new_requirements, |r, c| r.conjunct_term(&c));
+        
+        add_creq_cb.as_mut().map(|cb| cb(new_requirements.clone()));
+        
+        let is_subformular = self.is_constr_subformular(frame.prev_node, frame.node);
+        replace_with_or_abort(&mut self.markers[frame.node.0].constraints, |c| {
+            if !is_subformular {
+                c.disjunct(new_requirements)
+            } else {
+                new_requirements
+            }
+        });
 
-        self.scan_and_add_constraint_requirements(
-            frame.node,
-            frame.prev_node,
-            frame.past_constraint_cube_cnt
-        );
-        self.scan_and_add_constraint_activators(
-            frame.node,
-            frame.prev_node,
-            frame.past_constraint_cube_cnt
+        let new_activators = match frame.prev_node {
+            Some(prev) => self.markers[prev.0].activated.clone(),
+            None => DNFForm::new(),
+        };
+        let new_activators =
+            self.scan_constraint_activators(frame.node, frame.prev_node)
+                .fold(new_activators, |r, c| r.conjunct_term(&c));
+
+        add_cact_cb.as_mut().map(|cb| cb(new_activators.clone()));
+
+        let is_subformular = self.is_activators_subformular(frame.prev_node, frame.node);
+        replace_with_or_abort(&mut self.markers[frame.node.0].activated, |c| {
+            if !is_subformular {
+                c.disjunct(new_activators)
+            } else {
+                new_activators
+            }
+        });
+
+        dbg_log!(
+            DBG_EXTRA2,
+            "    constraints: {:?}",
+            self.markers[frame.node.0].constraints
         );
         
         for next in self.graph.edges_from(frame.node.0) {
-            let is_subformular = {
-                let my_constr = &self.markers[frame.node.0].constraints;
-                let next_constr = &self.markers[next].constraints;
-                my_constr.is_subformula_of(next_constr)
-            };
-            
+            let is_subformular =
+                self.is_constr_subformular(Some(frame.node), TilePinId(next));
             if !is_subformular {
-                let my_constr = self.markers[frame.node.0].constraints.clone();
-                let my_activated = self.markers[frame.node.0].activated.clone();
-
-                /* Callbacks for debugging */
-                add_creq_cb.as_mut().map(|cb| cb(my_constr.clone()));
-                add_cact_cb.as_mut().map(|cb| cb(my_activated.clone()));
-
-                replace_with_or_abort(&mut self.markers[next].constraints, |c| {
-                    c.disjunct(my_constr)
-                });
-                replace_with_or_abort(&mut self.markers[next].activated, |c| {
-                    c.disjunct(my_activated)
-                });
                 self.queue.push_back(PortToPortRouterFrame {
+                    #[cfg(debug_assertions)]
+                    _step: frame._step + 1,
                     prev_node: Some(frame.node),
-                    past_constraint_cube_cnt: self.markers[next].constraints.num_cubes(),
                     node: TilePinId(next),
+                    #[cfg(debug_assertions)]
+                    _cube_count: self.markers[frame.node.0].constraints.num_cubes(),
                     accumulator: new_acc.clone(),
                 });
             }
@@ -275,59 +320,29 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
         Some(frame.node)
     }
 
-    fn scan_and_add_constraint_requirements(
-        &mut self,
-        node: TilePinId,
-        prev_node: Option<TilePinId>,
-        past_constraint_cube_cnt: usize
-    ) {
-        if let Some(prev) = prev_node {
-            /* Add constraints for no multiple drivers */
-            for driver in self.graph.edges_to(node.0) {
-                if driver == prev.0 { continue; }
-                replace_with_or_abort(&mut self.markers[node.0].constraints, |c| {
-                    /* XXX: New cubes might've got added to the constraints.
-                     * It's important to add the constraints to the cube assocated
-                     * with the route this frame is a part of. */
-                    c.conjunct_term_with(
-                        past_constraint_cube_cnt - 1,
-                        FormulaTerm::NegVar(ConstrainingElement::Port(driver as u32))
-                    )
-                });
-            }
-        }
-
-        dbg_log!(
-            DBG_EXTRA1,
-            "Added constraints for node {}. Current status: {:?}",
-            node.0,
-            self.markers[node.0].constraints
-        );
+    fn scan_constraint_requirements(&self, node: TilePinId, prev_node: Option<TilePinId>)
+        -> impl Iterator<Item = FormulaTerm<ConstrainingElement>> + 'g
+    {
+        /* Add constraints for no multiple drivers (yield all except prev_node) */
+        let graph = self.graph;
+        prev_node.into_iter().map(move |prev| {
+            graph.edges_to(node.0).filter_map(move |driver| {
+                (driver != prev.0)
+                    .then(|| FormulaTerm::NegVar(ConstrainingElement::Port(driver as u32)))
+            })
+        }).flatten()
     }
 
-    fn scan_and_add_constraint_activators(
-        &mut self,
-        node: TilePinId,
-        prev_node: Option<TilePinId>,
-        past_constraint_cube_cnt: usize
-    ) {
-        if let Some(previous) = prev_node {
-            let mut must_activate_driver = false;
-            for pnode in self.graph.edges_to(node.0) {
-                if pnode != previous.0 {
-                    must_activate_driver = true;
-                    break;
-                }
-            }
-            if must_activate_driver {
-                replace_with_or_abort(&mut self.markers[node.0].activated, |a|
-                    a.conjunct_term_with(
-                        past_constraint_cube_cnt - 1,
-                        FormulaTerm::Var(ConstrainingElement::Port(previous.0 as u32))
-                    )
-                );
-            }
-        }
+    fn scan_constraint_activators(&self, node: TilePinId, prev_node: Option<TilePinId>)
+        -> impl Iterator<Item = FormulaTerm<ConstrainingElement>> + 'g
+    {
+        let graph = self.graph;
+        prev_node.into_iter().map(move |prev| {
+            graph.edges_to(node.0).filter_map(move |pnode| {
+                (pnode == prev.0)
+                    .then(|| FormulaTerm::Var(ConstrainingElement::Port(prev.0 as u32)))  
+            })
+        }).flatten()
     }
 
     fn init_constraints_and_activators(&mut self, node: usize) {
@@ -345,9 +360,12 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
 
         self.queue.clear();
         self.queue.push_back(PortToPortRouterFrame {
+            #[cfg(debug_assertions)]
+            _step: 0,
             prev_node: None,
-            past_constraint_cube_cnt: 0,
             node: self.from,
+            #[cfg(debug_assertions)]
+            _cube_count: 1,
             accumulator: Default::default(),
         });
         loop {
@@ -696,12 +714,16 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
     fn route_range(&self, range: std::ops::Range<usize>, optimize: bool)
         -> HashMap<(usize, usize), PinPairRoutingInfo<ConstrainingElement>>
     {
+        let mut pin_to_pin_map = HashMap::new();
+        if range.is_empty() {
+            return pin_to_pin_map;
+        }
+
         let pin_cnt = self.graph.nodes.len();
         debug_assert!(range.start < range.end);
         debug_assert!(range.start <= pin_cnt);
         debug_assert!(range.end <= range.end);
 
-        let mut pin_to_pin_map = HashMap::new();
         for from in range {
             if let PinDir::Input = self.graph.get_node(from).dir {
                 continue; /* We don't need routing information for input pins */
