@@ -30,6 +30,7 @@ pub mod include_path;
 #[macro_use]
 pub mod log;
 pub mod common;
+pub mod strings;
 pub mod ic_loader;
 pub mod logic_formula;
 pub mod router;
@@ -44,6 +45,7 @@ use crate::router::serialize::*;
 use crate::log::*;
 use crate::common::*;
 use crate::exporter::*;
+use crate::strings::*;
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -91,6 +93,12 @@ struct PreprocessCmd {
     no_formula_opt: bool,
     #[arg(long, help = "Add debugging hints to the exported JSON")]
     with_debug_hints: bool,
+    #[arg(
+        short = 'c',
+        long,
+        help = "Add $VCC and $GND ports to sites with constant generators")
+    ]
+    virtual_consts: bool
 }
 
 #[derive(Parser, Debug)]
@@ -164,7 +172,7 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
     for (tt_id, tt) in tile_types {
         let tile_name = device.ic_str(tt.get_name()).unwrap();
         dbg_log!(DBG_INFO, "Processing tile {}", tile_name);
-        let brouter = BruteRouter::<()>::new(&device, tt_id as u32);
+        let brouter = BruteRouter::<()>::new(&device, tt_id as u32, args.virtual_consts);
 
         dot_exporter.ignore_or_export(&tile_name, || {
             brouter.create_dot_exporter(&device).export_dot(&device, &tile_name)
@@ -230,7 +238,7 @@ fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
     let routes = Arc::new(Mutex::new(Vec::new()));
     let routes_l = Arc::clone(&routes);
 
-    let brouter = BruteRouter::<Vec<TilePinId>>::new(&device, tt_id as u32);
+    let brouter = BruteRouter::<Vec<TilePinId>>::new(&device, tt_id as u32, false);
     
     let from = brouter.get_pin_id(&device, from_site, from_bel, from_pin)
         .expect("From pin does not exist!");
@@ -256,11 +264,12 @@ fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
 
     let _ = brouter.route_pins(from, None, false).enumerate();
 
+    let gsctx = GlobalStringsCtx::hold();
     println!("Explored the following routes:");
     for (route_id, route) in routes_l.deref().lock().unwrap().deref().iter().enumerate() {
         println!("  Route #{}:", route_id);
         for pin in route {
-            println!("    {}", brouter.get_pin_name(&device, *pin).to_string());
+            println!("    {}", brouter.get_pin_name(&device, &gsctx, *pin).to_string());
         }
     }
 }

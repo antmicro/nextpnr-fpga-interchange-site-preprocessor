@@ -91,10 +91,12 @@ impl ConstrainingElementWithDebugInfo {
     {
         use site_brute_router::ConstrainingElement::*;
         match og {
-            Port(id) => ConstrainingElementWithDebugInfo::Port {
-                id,
-                name: brouter.borrow().get_pin_name(device, TilePinId(id as usize))
-                    .to_string()
+            Port(id) => {
+                let gsctx = GlobalStringsCtx::hold();
+                let name = brouter.borrow()
+                    .get_pin_name(device, &gsctx, TilePinId(id as usize))
+                    .to_string();
+                ConstrainingElementWithDebugInfo::Port { id, name }
             }
         }
     }
@@ -119,8 +121,9 @@ impl PinPairRoutingInfoWithDebugInfo {
         R: Borrow<site_brute_router::BruteRouter<A>>,
         A: Default + Clone + std::fmt::Debug + 'static
     {
-        let from = brouter.borrow().get_pin_name(device, from).to_string();
-        let to = brouter.borrow().get_pin_name(device, to).to_string();
+        let gsctx = GlobalStringsCtx::hold();
+        let from = brouter.borrow().get_pin_name(device, &gsctx, from).to_string();
+        let to = brouter.borrow().get_pin_name(device, &gsctx, to).to_string();
         Self {
             search_id: format!("{}->{}", from, to),
             from,

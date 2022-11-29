@@ -24,6 +24,7 @@ pub mod include_path;
 #[macro_use]
 pub mod log;
 pub mod common;
+pub mod strings;
 pub mod ic_loader;
 pub mod logic_formula;
 pub mod router;

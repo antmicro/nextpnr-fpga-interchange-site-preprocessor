@@ -22,6 +22,7 @@ use crate::router::site_brute_router::{
     RoutingGraph,
     RoutingGraphNodeKind
 };
+use crate::strings::GlobalStringsCtx;
 
 pub struct SiteRoutingGraphDotExporter<'d, G, B, P, T> where 
     G: Borrow<RoutingGraph>,
@@ -60,13 +61,18 @@ impl<'d, G, B, P, T> SiteRoutingGraphDotExporter<'d, G, B, P, T> where
                 RoutingGraphNodeKind::FreePort => unreachable!(),
             };
             let stitt = self.bels.borrow()[bel_idx].site_type_idx;
-            let bel_name = device.ic_str(self.bels.borrow()[bel_idx].name).unwrap();
-            let st_idx =
-                self.tt.borrow().get_site_types().unwrap().get(stitt).get_primary_type();
-            let st = st_list.get(st_idx);
-            let st_name = device.ic_str(st.get_name()).unwrap();
-    
-            let bel_name = format!("{}_{}/{}", st_name, stitt, bel_name);
+
+            let bel_name = {
+                let gsctx = GlobalStringsCtx::hold();
+
+                let bel_name = self.bels.borrow()[bel_idx].name.get(device, &gsctx);
+                let st_idx =
+                    self.tt.borrow().get_site_types().unwrap().get(stitt).get_primary_type();
+                let st = st_list.get(st_idx);
+                let st_name = device.ic_str(st.get_name()).unwrap();
+        
+                format!("{}_{}/{}", st_name, stitt, bel_name)
+            };
     
             let bucket = bel_subgraphs.entry(bel_name)
                 .or_insert_with(|| BELSubGraph::default());
@@ -85,9 +91,10 @@ impl<'d, G, B, P, T> SiteRoutingGraphDotExporter<'d, G, B, P, T> where
         dot += &format!("digraph {} {{\n\n", name);
     
         for (bel_name, bel_subgraph) in bel_subgraphs {
-            
     
-            dot += &format!("    subgraph cluster_{} {{\n", bel_name.replace('/', "__"));
+            dot += &format!(
+                "    subgraph cluster_{} {{\n",
+                bel_name.replace('/', "__").replace('$', "S_"));
             dot += &format!("        node [style=filled];\n");
             dot += &format!("        label = \"{}\";\n", bel_name);
             dot += &format!(
@@ -99,9 +106,11 @@ impl<'d, G, B, P, T> SiteRoutingGraphDotExporter<'d, G, B, P, T> where
                 let (bel_idx, bel_pin_idx) =
                     self.tile_belpin_idx_to_bel_pin.borrow()[*pin_idx];
                 let bel = &self.bels.borrow()[bel_idx];
-                
-                let pin_name = device.ic_str(bel.pins[bel_pin_idx].name).unwrap();
-                
+
+                let gsctx = GlobalStringsCtx::hold();
+
+                let pin_name = bel.pins[bel_pin_idx].name.get(device, &gsctx);
+            
                 dot += &format!(
                     "        {} [label=\"{}\", color={}];\n",
                     pin_idx,
