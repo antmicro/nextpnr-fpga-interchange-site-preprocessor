@@ -401,7 +401,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
     /// used by nextpnr/python-fpga-interchange to model constant nets.
     /// 
     /// The approach can be summarized uing the following graph:
-    /// ```no_run
+    /// ```text
     ///         ╔════════════════════════════════════════════════════════════╗
     ///         ║                            SITE                            ║
     ///     A━━━║────────────────────────────────────────────┐               ║

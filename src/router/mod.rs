@@ -179,7 +179,7 @@ fn create_input_port_bel(
 
 /// Creates a BEL that acts as a pseudo-pip
 /// 
-/// ```no_run
+/// ```text
 ///        ┏━━━━━┓
 /// input──┃ PIP ┃──output
 ///        ┗━━━━━┛
