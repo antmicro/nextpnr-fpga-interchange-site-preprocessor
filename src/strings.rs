@@ -37,8 +37,36 @@ impl GlobalStringsCtx {
         Self()
     }
 
-    pub fn get_global_string<'s>(&'s self, id: GlobalStringId) -> GlobalStringRef<'s>
+    /// Get a global identifier for a provided string. Creates a new identifier if the
+    /// string was not registered. Returns an existing identifier if the string has been
+    /// already registered.
+    pub fn create_global_string<S>(&mut self, s: S) -> GlobalStringId where
+        S: ToString + Borrow<str>
     {
+        /* Use &mut self reference to statically prevent deadlocking with
+         * `Self::get_global_string` */
+
+        /* We need to acquire exclusive lock on `GLOBAL_STRINGS_REVMAP` first to prevent
+         * failing the ID presence check in one thread, then adding the same ID in another,
+         * one and then adding a duplicate in this one */
+        let mut revmap = GLOBAL_STRINGS_REVMAP.lock().unwrap();
+    
+        if let Some(id) = revmap.get(s.borrow()) {
+            return GlobalStringId(*id);
+        }
+    
+        let mut strings = GLOBAL_STRINGS.write().unwrap();
+        
+        let id = strings.len();
+
+        let s = s.to_string();
+        revmap.insert(s.clone(), id);
+        strings.push(s);
+    
+        GlobalStringId(id)
+    }
+
+    pub fn get_global_string<'s>(&'s self, id: GlobalStringId) -> GlobalStringRef<'s> {
         GlobalStringRef {
             guard: GLOBAL_STRINGS.read().unwrap(),
             idx: id.0
@@ -106,23 +134,4 @@ impl<'l> std::fmt::Display for GlobalStringRefMut<'l> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.guard[self.idx].fmt(f)
     }
-}
-
-pub fn create_global_string(s: String) -> GlobalStringId {
-    /* We need to acquire exclusive lock on `GLOBAL_STRINGS_REVMAP` first to prevent
-     * failing the ID presence check in one thread, then adding the same ID in another,
-     * one and then adding a duplicate in this one */
-    let mut revmap = GLOBAL_STRINGS_REVMAP.lock().unwrap();
-
-    if let Some(id) = revmap.get(&s) {
-        return GlobalStringId(*id);
-    }
-
-    let mut strings = GLOBAL_STRINGS.write().unwrap();
-    
-    let id = strings.len();
-    revmap.insert(s.clone(), id);
-    strings.push(s);
-
-    GlobalStringId(id)
 }

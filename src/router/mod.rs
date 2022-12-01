@@ -21,6 +21,7 @@ use crate::common::IcStr;
 use crate::ic_loader::archdef::Root as Device;
 use crate::log::*;
 use crate::strings::*;
+use crate::ic_loader::{DeviceResources_capnp, LogicalNetlist_capnp};
 
 pub mod site_brute_router;
 pub mod serialize;
@@ -34,9 +35,9 @@ pub enum PinDir {
     Output,
 }
 
-impl From<crate::ic_loader::LogicalNetlist_capnp::netlist::Direction> for PinDir {
-    fn from(pd: crate::ic_loader::LogicalNetlist_capnp::netlist::Direction) -> Self {
-        use crate::ic_loader::LogicalNetlist_capnp::netlist::Direction::*;
+impl From<LogicalNetlist_capnp::netlist::Direction> for PinDir {
+    fn from(pd: LogicalNetlist_capnp::netlist::Direction) -> Self {
+        use LogicalNetlist_capnp::netlist::Direction::*;
         match pd {
             Inout => Self::Inout,
             Input => Self::Input,
@@ -57,9 +58,9 @@ pub enum BELCategory {
     SitePort,
 }
 
-impl From<crate::ic_loader::DeviceResources_capnp::device::BELCategory> for BELCategory {
-    fn from(cat: crate::ic_loader::DeviceResources_capnp::device::BELCategory) -> Self {
-        use crate::ic_loader::DeviceResources_capnp::device::BELCategory::*;
+impl From<DeviceResources_capnp::device::BELCategory> for BELCategory {
+    fn from(cat: DeviceResources_capnp::device::BELCategory) -> Self {
+        use DeviceResources_capnp::device::BELCategory::*;
         match cat {
             Logic => Self::LogicOrRouting,
             Routing => Self::LogicOrRouting,
@@ -147,19 +148,29 @@ pub struct BELInfo {
     pub pins: Vec<BELPin>,
 }
 
+impl BELInfo {
+    pub fn find_pin(&self, name: ResourceName) -> Option<usize> {
+        self.pins.iter()
+            .enumerate()
+            .find_map(|(pin_idx, pin)| (pin.name == name).then(|| pin_idx))
+    }
+}
+
 fn create_input_port_bel(
     name: String,
     stitt_id: u32,
 )
     -> BELInfo
 {
+    let mut gsctx = GlobalStringsCtx::hold();
+    
     BELInfo {
         site_type_idx: stitt_id,
-        name: ResourceName::Virtual(create_global_string(name.clone())),
+        name: ResourceName::Virtual(gsctx.create_global_string(name.clone())),
         category: BELCategory::SitePort,
         pins: vec![
             BELPin {
-                name: ResourceName::Virtual(create_global_string(name)),
+                name: ResourceName::Virtual(gsctx.create_global_string(name)),
                 dir: PinDir::Input,
             }
         ],
@@ -204,6 +215,39 @@ fn create_pip_bel(
             ],
         }
     }
+}
+
+fn create_vconst_net_pipbel_name<B, N>(
+    bel_name: B,
+    net_name: N,
+    gsctx: &mut GlobalStringsCtx
+)
+    -> ResourceName
+where
+    B: std::fmt::Display,
+    N: std::fmt::Display
+{
+    ResourceName::Virtual(gsctx.create_global_string(
+        format!("{}_{}_SITE_WIRE", bel_name, net_name)
+    ))
+}
+
+fn create_belname_pinname_to_wire_lookup<'d>(
+    st: &DeviceResources_capnp::device::site_type::Reader<'d>
+)
+    -> HashMap<(u32, u32), u32>
+{
+    st.get_site_wires().unwrap().iter()
+        .enumerate()    
+        .fold(HashMap::new(), |mut map, (wire_id, wire)| {
+            map.extend(wire.get_pins().unwrap().iter()
+                .map(|pin| {
+                    let bpin = st.get_bel_pins().unwrap().get(pin);
+                    
+                    ((bpin.get_bel(), bpin.get_name()), wire_id as u32)
+                }));
+            map
+        })
 }
 
 /// Gathers BELs in the order matching the one in chipdb
@@ -251,17 +295,9 @@ fn gather_bels_in_tile_type<'a>(
             let sw_list = st.get_site_wires().unwrap();
             
             /* For some reason everything in constants is referenced by names */
-            let bel_pin_to_wire = st.get_site_wires().unwrap().iter()
-                .enumerate()    
-                .fold(HashMap::new(), |mut map, (wire_id, wire)| {
-                    map.extend(wire.get_pins().unwrap().iter()
-                        .map(|pin| {
-                            let bpin = st.get_bel_pins().unwrap().get(pin);
-                            
-                            ((bpin.get_bel(), bpin.get_name()), wire_id as u32)
-                        }));
-                    map
-                });
+            let bel_pin_to_wire = create_belname_pinname_to_wire_lookup(&st);
+            
+            let mut gsctx = GlobalStringsCtx::hold();
 
             let (vcc_added, gnd_added) = site_sources.iter()
                 .filter(|site_source| {
@@ -272,38 +308,32 @@ fn gather_bels_in_tile_type<'a>(
                         site_source.get_bel(),
                         site_source.get_bel_pin()
                     )];
-                    let wire_name = device.ic_str(sw_list.get(wire_id).get_name())
-                        .unwrap();
                     let bel_name = device.ic_str(site_source.get_bel()).unwrap();
 
-                    let acc = match site_source.get_constant().unwrap() {
+                    let (acc, net_name) = match site_source.get_constant().unwrap() {
                         ConstantType::Vcc => if !vcc_added {
                             bels.push(create_input_port_bel(
                                 "$VCC".into(),
                                 stitt_id as u32
                             ));
-                            (true, gnd_added)
+                            ((true, gnd_added), "$VCC")
                         } else {
-                            (vcc_added, gnd_added)
+                            ((vcc_added, gnd_added), "$VCC")
                         },
                         ConstantType::Gnd => if !gnd_added {
                             bels.push(create_input_port_bel(
                                 "$GND".into(),
                                 stitt_id as u32
                             ));
-                            (vcc_added, true)
+                            ((vcc_added, true), "$GND")
                         } else {
-                            (vcc_added, gnd_added)
+                            ((vcc_added, gnd_added), "$GND")
                         },
                         u @ _ => panic!("Unexpected constant type `{:?}`", u),
                     };
 
                     bels.push(create_pip_bel(
-                        ResourceName::Virtual(create_global_string(
-                            format!(
-                                "{}_{}", bel_name, wire_name
-                            )
-                        )),
+                        create_vconst_net_pipbel_name(bel_name, net_name, &mut gsctx),
                         ResourceName::DeviceResources(site_source.get_bel()),
                         ResourceName::DeviceResources(
                             sw_list.get(wire_id).get_name()

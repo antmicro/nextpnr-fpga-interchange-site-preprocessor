@@ -496,7 +496,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
             callback: None,
         }
     }
-
+    
     pub fn with_callback<F>(self, callback: F) -> Self where 
         F: FnMut(&PortToPortRouterFrame<A>)
             -> (
@@ -536,13 +536,15 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
         }
     }
 
+    /// Create connections between BELs in site's routing graph based on the site wires
+    /// present in DeviceResources.
     fn init_site_wires_in_graph<'d>(
         graph: &mut RoutingGraph,
         device: &Device<'d>,
         tt: &crate::ic_loader::archdef::TileTypeReader<'d>,
         bels: &[BELInfo],
         bel_name_to_bel_idx: &HashMap<(u32, ResourceName), usize>,
-        tile_belpin_idx: &HashMap<(usize, usize), usize>,
+        tile_belpin_idx: &HashMap<(usize, usize), usize>
     ) {
         for (stitt_idx, stitt) in tt.get_site_types().unwrap().iter().enumerate() {
             let site_type_idx = stitt.get_primary_type();
@@ -550,7 +552,9 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
                 .get_site_type_list().unwrap()
                 .get(site_type_idx);
             
-            for wire in site_type.reborrow().get_site_wires().unwrap() {
+            let sw_list = site_type.get_site_wires().unwrap();
+            
+            for wire in sw_list {
                 let mut drivers = Vec::new();
                 let mut sinks = Vec::new();
 
@@ -588,30 +592,15 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
         }
     }
 
-    fn create_routing_graph<'a>(
-        device: &'a Device<'a>,
-        tt: &crate::ic_loader::archdef::TileTypeReader<'a>,
+    /// Create connections that represent pseudo-PIPs (routing BELs) in site's routing graph.
+    fn init_pseuopips_in_graph<'d>(
+        graph: &mut RoutingGraph,
+        device: &Device<'d>,
+        tt: &crate::ic_loader::archdef::TileTypeReader<'d>,
         bels: &[BELInfo],
         bel_name_to_bel_idx: &HashMap<(u32, ResourceName), usize>,
-        tile_belpin_idx: &HashMap<(usize, usize), usize>,
-        add_virtual_consts: bool
-    )
-        -> RoutingGraph
-    {
-        /* Create routing graph: conections between BELs */
-        let mut graph = RoutingGraph::new(tile_belpin_idx.len());
-
-        Self::init_bels_in_graph(&mut graph, bels, tile_belpin_idx);
-        Self::init_site_wires_in_graph(
-            &mut graph,
-            device,
-            tt,
-            bels,
-            bel_name_to_bel_idx,
-            tile_belpin_idx
-        );
-
-        /* Create routing graph: add edges for pseudo-pips (routing BELs) */
+        tile_belpin_idx: &HashMap<(usize, usize), usize>
+    ) {
         for (stitt_idx, stitt) in tt.get_site_types().unwrap().iter().enumerate() {
             let st_idx = stitt.get_primary_type();
             let st = device.reborrow().get_site_type_list().unwrap().get(st_idx);
@@ -669,6 +658,161 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
 
                 let _ = graph.connect(tile_in_pin_idx, tile_out_pin_idx);
             }
+        }
+    }
+
+    /// Creates connections between `$VCC`, `$GND` site-ports and routing BELs associated
+    /// with virtual constant nets
+    fn init_virtual_wires_in_graph<'d>(
+        graph: &mut RoutingGraph,
+        device: &Device<'d>,
+        tt: &crate::ic_loader::archdef::TileTypeReader<'d>,
+        bels: &[BELInfo],
+        bel_name_to_bel_idx: &HashMap<(u32, ResourceName), usize>,
+        tile_belpin_idx: &HashMap<(usize, usize), usize>
+    ) {
+        use crate::ic_loader::DeviceResources_capnp::device::ConstantType;
+
+        for (stitt_idx, stitt) in tt.get_site_types().unwrap().iter().enumerate() {
+            let site_type_idx = stitt.get_primary_type();
+            let site_type = device.reborrow()
+                .get_site_type_list().unwrap()
+                .get(site_type_idx);
+            
+            let sw_list = site_type.get_site_wires().unwrap();
+        
+            let mut gsctx = GlobalStringsCtx::hold();
+    
+            let vcc_bel_name = gsctx.create_global_string("$VCC");
+            let vcc_bel_idx_opt = bel_name_to_bel_idx.get(&(
+                stitt_idx as u32,
+                ResourceName::Virtual(vcc_bel_name)
+            ));
+            
+            let gnd_bel_name = gsctx.create_global_string("$GND");
+            let gnd_bel_idx_opt = bel_name_to_bel_idx.get(&(
+                stitt_idx as u32,
+                ResourceName::Virtual(gnd_bel_name)
+            ));
+
+            let bel_pin_to_wire = create_belname_pinname_to_wire_lookup(&site_type);
+
+            let sources =
+                device.get_constants().unwrap().get_site_sources().unwrap().iter()
+                    .filter(|src| src.get_site_type() == site_type.get_name());
+            
+            let mut gsctx = GlobalStringsCtx::hold();
+
+            for src in sources {
+                let src_bel_name = device.ic_str(src.get_bel()).unwrap();
+
+                let (from_bel_idx, from_bel_name) = match src.get_constant().unwrap() {
+                    ConstantType::Vcc => match vcc_bel_idx_opt {
+                        Some(bel_idx) => (bel_idx, vcc_bel_name),
+                        None => panic!("VCC site source found but no $VCC port was added."),
+                    },
+                    ConstantType::Gnd => match gnd_bel_idx_opt {
+                        Some(bel_idx) => (bel_idx, gnd_bel_name),
+                        None => panic!("GND site source found but no $GND port was added."),
+                    },
+                    _ => panic!("Usupported constant type"),
+                };
+
+                /* XXX: This is a site-pin BEL. It has only one pin. */
+                let from_belpin_idx = *tile_belpin_idx.get(&(*from_bel_idx, 0))
+                    .unwrap();
+
+                let src_bel_idx = bel_name_to_bel_idx[&(
+                    stitt_idx as u32,
+                    ResourceName::DeviceResources(src.get_bel())
+                )];
+
+                let src_pin_idx = bels[src_bel_idx].find_pin(
+                    ResourceName::DeviceResources(src.get_bel_pin())
+                ).unwrap();
+
+                let src_belpin = tile_belpin_idx[&(src_bel_idx, src_pin_idx)];
+                let src_wire_id = bel_pin_to_wire[&(src.get_bel(), src.get_bel_pin())];
+                let src_wire = sw_list.get(src_wire_id);
+
+                /* Borrowing rules won't let me iterate over connections and add
+                 * new ones at the same time.
+                 * TODO: implement an associated function for `RoutingGraph` that would
+                 * allow creating new edges while iterating over existing ones. */
+                let sinks: Vec<_> = graph.edges_from(src_belpin).collect();
+
+                let net_name = gsctx.get_global_string(from_bel_name).to_string();
+                let pip_bel_name =
+                    create_vconst_net_pipbel_name(src_bel_name, net_name, &mut gsctx);
+                
+                let pip_bel_idx = bel_name_to_bel_idx[&(stitt_idx as u32, pip_bel_name)];
+
+                let pip_bel_input_pin_idx = bels[pip_bel_idx]
+                    .find_pin(ResourceName::DeviceResources(src.get_bel()))
+                    .expect("Can't find PIP BEL pin for const source BEL");
+                let pip_bel_output_pin_idx = bels[pip_bel_idx]
+                    .find_pin(ResourceName::DeviceResources(src_wire.get_name()))
+                    .expect("Can't find PIP BEL pin for const source wire");
+                
+                let pip_bel_input_belpin =
+                    tile_belpin_idx[&(pip_bel_idx, pip_bel_input_pin_idx)];
+                let pip_bel_output_belpin =
+                    tile_belpin_idx[&(pip_bel_idx, pip_bel_output_pin_idx)];
+                    
+                /* Connect the BEL pip to virtual site-port BEL */
+                graph.connect(from_belpin_idx, pip_bel_input_belpin);
+
+                /* Create pseoudo-pip connection */
+                graph.connect(pip_bel_input_belpin, pip_bel_output_belpin);
+
+                /* Create connections to original sinks */
+                for sink in sinks {
+                    graph.connect(pip_bel_output_belpin, sink);
+                }
+            }
+        }
+    }
+
+    fn create_routing_graph<'d>(
+        device: &Device<'d>,
+        tt: &crate::ic_loader::archdef::TileTypeReader<'d>,
+        bels: &[BELInfo],
+        bel_name_to_bel_idx: &HashMap<(u32, ResourceName), usize>,
+        tile_belpin_idx: &HashMap<(usize, usize), usize>,
+        add_virtual_consts: bool
+    )
+        -> RoutingGraph
+    {
+        let mut graph = RoutingGraph::new(tile_belpin_idx.len());
+
+        Self::init_bels_in_graph(&mut graph, bels, tile_belpin_idx);
+        Self::init_site_wires_in_graph(
+            &mut graph,
+            device,
+            tt,
+            bels,
+            bel_name_to_bel_idx,
+            tile_belpin_idx
+        );
+       
+        Self::init_pseuopips_in_graph(
+            &mut graph,
+            device,
+            tt,
+            bels,
+            bel_name_to_bel_idx,
+            tile_belpin_idx
+        );
+
+        if add_virtual_consts {
+            Self::init_virtual_wires_in_graph(
+                &mut graph,
+                device,
+                tt,
+                bels,
+                bel_name_to_bel_idx,
+                tile_belpin_idx
+            )
         }
 
         /* Check that all nodes have been initialized. */
