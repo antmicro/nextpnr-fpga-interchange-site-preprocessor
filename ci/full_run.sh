@@ -25,7 +25,7 @@ fi
 DOTS_DIR=dots
 JSONS_DIR=jsons
 THREADS=`nproc`
-COMMON_PREPROCESS_OPTIONS="--threads $THREADS --json-prefix $JSONS_DIR --json :all --dot-prefix $DOTS_DIR --dot :all"
+COMMON_PREPROCESS_OPTIONS="--threads $THREADS --json-prefix $JSONS_DIR --json :all --dot-prefix $DOTS_DIR --dot :all -c"
 DEBUG_GLOBAL_OPTIONS="--raw"
 RELEASE_GLOBAL_OPTIONS=""
 BUILD_TYPE=$1
