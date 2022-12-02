@@ -593,7 +593,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
     }
 
     /// Create connections that represent pseudo-PIPs (routing BELs) in site's routing graph.
-    fn init_pseuopips_in_graph<'d>(
+    fn init_pseudopips_in_graph<'d>(
         graph: &mut RoutingGraph,
         device: &Device<'d>,
         tt: &crate::ic_loader::archdef::TileTypeReader<'d>,
@@ -795,7 +795,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
             tile_belpin_idx
         );
        
-        Self::init_pseuopips_in_graph(
+        Self::init_pseudopips_in_graph(
             &mut graph,
             device,
             tt,

@@ -156,6 +156,18 @@ impl BELInfo {
     }
 }
 
+/// Creates a BEL that acts as site's input pin.
+/// 
+/// The BEL will have a sinlge pin, that will output the input for a site.
+/// 
+/// ```text
+///              ╔══════════════...
+///              ║     SITE     ...
+///              ║┏━━━━━┓       ...
+/// site_pin━━━━━╟┃ PIN ┃──pin  ...
+///              ║┗━━━━━┛       ...
+///              ╚══════════════...
+/// ```
 fn create_input_port_bel(
     name: String,
     stitt_id: u32,
@@ -171,13 +183,13 @@ fn create_input_port_bel(
         pins: vec![
             BELPin {
                 name: ResourceName::Virtual(gsctx.create_global_string(name)),
-                dir: PinDir::Input,
+                dir: PinDir::Output,
             }
         ],
     }
 }
 
-/// Creates a BEL that acts as a pseudo-pip
+/// Creates a rouiting BEL that acts as a pseudo-pip
 /// 
 /// ```text
 ///        ┏━━━━━┓
