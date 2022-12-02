@@ -105,6 +105,20 @@ impl<'l> std::fmt::Display for GlobalStringRef<'l> {
     }
 }
 
+impl<'l> std::hash::Hash for GlobalStringRef<'l> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.idx.hash(state)
+    }
+}
+
+impl<'l> std::cmp::PartialEq for GlobalStringRef<'l> {
+    fn eq(&self, other: &Self) -> bool {
+        self.idx.eq(&other.idx)
+    }
+}
+
+impl<'l> std::cmp::Eq for GlobalStringRef<'l> {}
+
 pub struct GlobalStringRefMut<'l> {
     guard: RwLockWriteGuard<'l, Vec<String>>,
     idx: usize,
@@ -135,3 +149,17 @@ impl<'l> std::fmt::Display for GlobalStringRefMut<'l> {
         self.guard[self.idx].fmt(f)
     }
 }
+
+impl<'l> std::hash::Hash for GlobalStringRefMut<'l> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.idx.hash(state)
+    }
+}
+
+impl<'l> std::cmp::PartialEq for GlobalStringRefMut<'l> {
+    fn eq(&self, other: &Self) -> bool {
+        self.idx.eq(&other.idx)
+    }
+}
+
+impl<'l> std::cmp::Eq for GlobalStringRefMut<'l> {}

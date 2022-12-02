@@ -46,6 +46,18 @@ impl<Id> FormulaTerm<Id> where Id: Ord + Eq {
             _ => false
         }
     }
+
+    pub fn map<F, NId>(self, f: F) -> FormulaTerm<NId> where
+        F: FnOnce(Id) -> NId,
+        NId: Ord + Eq
+    {
+        match self {
+            Self::Var(v) => FormulaTerm::Var(f(v)),
+            Self::NegVar(v) => FormulaTerm::NegVar(f(v)),
+            Self::True => FormulaTerm::True,
+            Self::False => FormulaTerm::False,
+        }
+    }
 }
 
 impl<Id> std::fmt::Debug for FormulaTerm<Id> where Id: Ord + Eq + std::fmt::Debug {

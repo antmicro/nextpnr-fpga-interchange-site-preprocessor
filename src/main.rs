@@ -15,7 +15,7 @@
 
 use clap::{arg, Parser};
 use lazy_static::__Deref;
-use crate::router::TilePinId;
+use crate::router::SitePinId;
 use std::path::Path;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -67,8 +67,8 @@ struct Args {
 
 #[derive(Parser, Debug)]
 struct PreprocessCmd {
-    #[arg(long, help = "Tile types to be routed")]
-    tile_types: Option<Vec<String>>,
+    #[arg(long, help = "Site types to be routed")]
+    site_types: Option<Vec<String>>,
     #[arg(
         long,
         default_value = "1",
@@ -77,22 +77,20 @@ struct PreprocessCmd {
     threads: usize,
     #[arg(
         long,
-        help = "Tile types to have their routing graphs exported to graphviz .dot files"
+        help = "Site types to have their routing graphs exported to graphviz .dot files"
     )]
     dot: Option<Vec<String>>,
     #[arg(long, default_value = "", help = "Directory for saving .dot files")]
     dot_prefix: String,
     #[arg(
         long,
-        help = "Tile types to have their routing cache exported to JSON format"
+        help = "Site types to have their routing cache exported to JSON format"
     )]
     json: Option<Vec<String>>,
     #[arg(long, default_value = "", help = " Directory for saving .json files")]
     json_prefix: String,
     #[arg(long, help = "Do not optimize logic formulas for constraints")]
     no_formula_opt: bool,
-    #[arg(long, help = "Add debugging hints to the exported JSON")]
-    with_debug_hints: bool,
     #[arg(
         short = 'c',
         long,
@@ -103,27 +101,25 @@ struct PreprocessCmd {
 
 #[derive(Parser, Debug)]
 struct RoutePairCmd {
-    #[arg(help = "Tile Type")]
+    #[arg(help = "Site Type")]
     tile_type: String,
-    #[arg(help = "Path to source pin: site_name/bel_name.pin_name")]
+    #[arg(help = "Path to source pin: bel_name.pin_name")]
     from: String,
-    #[arg(help = "Path to destination pin: site_name/bel_name.pin_name")]
+    #[arg(help = "Path to destination pin: bel_name.pin_name")]
     to: String,
 }
 
 impl RoutePairCmd {
-    fn get_from_triple<'s>(&'s self) -> Result<(&'s str, &'s str, &'s str), ()> {
-        let (site_name, tail) = self.from.split_once('/').ok_or(())?;
-        let (bel_name, pin_name) = tail.split_once('.').ok_or(())?;
+    fn get_from_tuple<'s>(&'s self) -> Result<(&'s str, &'s str), ()> {
+        let (bel_name, pin_name) = self.from.split_once('.').ok_or(())?;
 
-        Ok((site_name, bel_name, pin_name))
+        Ok((bel_name, pin_name))
     }
 
-    fn get_to_triple<'s>(&'s self) -> Result<(&'s str, &'s str, &'s str), ()> {
-        let (site_name, tail) = self.to.split_once('/').ok_or(())?;
-        let (bel_name, pin_name) = tail.split_once('.').ok_or(())?;
+    fn get_to_tuple<'s>(&'s self) -> Result<(&'s str, &'s str), ()> {
+        let (bel_name, pin_name) = self.to.split_once('.').ok_or(())?;
 
-        Ok((site_name, bel_name, pin_name))
+        Ok((bel_name, pin_name))
     }
 }
 
@@ -134,15 +130,15 @@ enum SubCommands {
 }
 
 fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
-    let tile_types: Vec<_> = device.get_tile_type_list().unwrap()
+    let site_types: Vec<_> = device.get_site_type_list().unwrap()
         .into_iter()
         .enumerate()
         .filter(|(_, tt)| {
-            match &args.tile_types {
-                Some(accepted_tile_types) => {
-                    accepted_tile_types.iter()
-                        .find(|tt_name| {
-                            *tt_name == device.ic_str(tt.get_name()).unwrap()
+            match &args.site_types {
+                Some(accepted_site_types) => {
+                    accepted_site_types.iter()
+                        .find(|st_name| {
+                            *st_name == device.ic_str(tt.get_name())
                         })
                         .is_some()
                 },
@@ -162,20 +158,14 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
             format!("{}_site_routability.json", device.get_name().unwrap())
         )
     );
-    let mut debug_json_exporter = CompoundJsonExporter::new(
-        &args.json,
-        Path::new(&args.json_prefix).join(
-            format!("{}_site_routability.json", device.get_name().unwrap())
-        )
-    );
 
-    for (tt_id, tt) in tile_types {
-        let tile_name = device.ic_str(tt.get_name()).unwrap();
-        dbg_log!(DBG_INFO, "Processing tile {}", tile_name);
-        let brouter = BruteRouter::<()>::new(&device, tt_id as u32, args.virtual_consts);
+    for (st_id, st) in site_types {
+        let st_name = device.ic_str(st.get_name());
+        dbg_log!(DBG_INFO, "Processing site type {}", st_name);
+        let brouter = BruteRouter::<()>::new(&device, st_id as u32, args.virtual_consts);
 
-        dot_exporter.ignore_or_export(&tile_name, || {
-            brouter.create_dot_exporter(&device).export_dot(&device, &tile_name)
+        dot_exporter.ignore_or_export(&st_name, || {
+            brouter.create_dot_exporter().export_dot(&device, &st_name)
         }).unwrap();
 
         let brouter = Arc::new(brouter);
@@ -188,62 +178,50 @@ fn preprocess<'d>(args: PreprocessCmd, device: ic_loader::archdef::Root<'d>) {
         };
 
         println!(concat!(
-            "Tile {}:\n",
+            "Site Type {}:\n",
             "    No. of intra-site routing pairs:               {}\n",
             "    No. of pins connected to out-of-site-sources:  {}\n",
             "    No. of pins connected to out-of-site-sinks:    {}"
             ),
-            tile_name,
+            st_name,
             routing_info.pin_to_pin_routing.len(),
             routing_info.out_of_site_sources.len(),
             routing_info.out_of_site_sinks.len()
         );
 
-        if args.with_debug_hints {
-            debug_json_exporter.ignore_or_export(&tile_name, ||
-                routing_info.with_debug_info(brouter, &device)
-            ).unwrap();
-        } else {
-            json_exporter.ignore_or_export(&tile_name, || routing_info)
-                .unwrap();
-        }
+        json_exporter.ignore_or_export(&st_name, ||
+            routing_info.with_extras(brouter, &device)
+        ).unwrap();
     }
     
     <MultiFileExporter as Exporter<String>>::flush(&mut dot_exporter).unwrap();
 
-    if args.with_debug_hints {
-        debug_json_exporter.flush().unwrap();
-    } else {
-        json_exporter.flush().unwrap();
-    }
+    json_exporter.flush().unwrap();
 }
 
 fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
     let (tt_id, _) = device.reborrow().get_tile_type_list().unwrap()
         .into_iter()
         .enumerate()
-        .find(|(_, tt)| {
-            device.ic_str(tt.get_name()).unwrap() == args.tile_type
-        })
+        .find(|(_, tt)| device.ic_str(tt.get_name()) == args.tile_type)
         .expect("Wrong tile type name");
     
-    let (from_site, from_bel, from_pin) = args.get_from_triple()
+    let (from_bel, from_pin) = args.get_from_tuple()
         .expect("Incorrent from pin format!");
-    let (to_site, to_bel, to_pin) = args.get_to_triple()
+    let (to_bel, to_pin) = args.get_to_tuple()
         .expect("Incorrent to pin format!");
-
     
     let router_state = Arc::new(Mutex::new(HashMap::new()));
     //let rs = Arc::clone(&router_state);
     let routes = Arc::new(Mutex::new(Vec::new()));
     let routes_l = Arc::clone(&routes);
 
-    let brouter = BruteRouter::<Vec<TilePinId>>::new(&device, tt_id as u32, false);
+    let brouter = BruteRouter::<Vec<SitePinId>>::new(&device, tt_id as u32, false);
     
-    let from = brouter.get_pin_id(&device, from_site, from_bel, from_pin)
+    let from = brouter.get_pin_id(&device, from_bel, from_pin)
         .expect("From pin does not exist!");
     
-    let to = brouter.get_pin_id(&device, to_site, to_bel, to_pin)
+    let to = brouter.get_pin_id(&device, to_bel, to_pin)
         .expect("To pin does not exist!");
     
     let brouter = brouter.with_callback(move |frame| {

@@ -14,12 +14,12 @@
  */
 
 pub trait IcStr<'a> {
-    fn ic_str(&self, id: u32) -> Result<&'a str, capnp::Error>;
+    fn ic_str(&self, id: u32) -> &'a str;
 }
 
 impl<'a> IcStr<'a> for crate::ic_loader::archdef::Root<'a> {
-    fn ic_str(&self, id: u32) -> Result<&'a str, capnp::Error> {
-        self.get_str_list().unwrap().get(id)
+    fn ic_str(&self, id: u32) -> &'a str {
+        self.get_str_list().unwrap().get(id).unwrap()
     }
 }
 

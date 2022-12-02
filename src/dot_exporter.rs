@@ -16,42 +16,39 @@
 use std::collections::HashMap;
 use std::borrow::Borrow;
 use crate::ic_loader::archdef::Root as Device;
-use crate::common::IcStr;
-use crate::router::{PinDir, BELInfo};
+use crate::router::{PinDir, BELInfo, ResourceNameRef};
 use crate::router::site_brute_router::{
     RoutingGraph,
     RoutingGraphNodeKind
 };
 use crate::strings::GlobalStringsCtx;
 
-pub struct SiteRoutingGraphDotExporter<'d, G, B, P, T> where 
+pub struct SiteRoutingGraphDotExporter<'d, G, B, P> where 
     G: Borrow<RoutingGraph>,
     B: Borrow<Vec<BELInfo>>,
-    P: Borrow<Vec<(usize, usize)>>,
-    T: Borrow<crate::ic_loader::archdef::TileTypeReader<'d>>
+    P: Borrow<Vec<(usize, usize)>>
 {
     graph: G,
     bels: B,
     tile_belpin_idx_to_bel_pin: P,
-    tt: T,
     _d: std::marker::PhantomData<&'d ()>,
 }
 
-impl<'d, G, B, P, T> SiteRoutingGraphDotExporter<'d, G, B, P, T> where 
+impl<'d, G, B, P> SiteRoutingGraphDotExporter<'d, G, B, P> where 
     G: Borrow<RoutingGraph>,
     B: Borrow<Vec<BELInfo>>,
-    P: Borrow<Vec<(usize, usize)>>,
-    T: Borrow<crate::ic_loader::archdef::TileTypeReader<'d>>
+    P: Borrow<Vec<(usize, usize)>>
 {
-    pub fn new(graph: G, bels: B, tile_belpin_idx_to_bel_pin: P, tt: T) -> Self {
-        Self { graph, bels, tile_belpin_idx_to_bel_pin, tt, _d: Default::default() }
+    pub fn new(graph: G, bels: B, tile_belpin_idx_to_bel_pin: P) -> Self {
+        Self { graph, bels, tile_belpin_idx_to_bel_pin, _d: Default::default() }
     }
 
     pub fn export_dot(&self, device: &Device<'d>, name: &str) -> String {
         let mut bel_subgraphs = HashMap::new();
+
+        let gsctx = GlobalStringsCtx::hold();
     
         /* Group pins of the same BELs into subgraphs */
-        let st_list = device.reborrow().get_site_type_list().unwrap();
         for node_idx in 0 .. self.graph.borrow().node_count() {
             let node = self.graph.borrow().get_node(node_idx);
             let (bel_idx, bel_is_routing, bel_is_site_port) = match node.kind {
@@ -60,19 +57,9 @@ impl<'d, G, B, P, T> SiteRoutingGraphDotExporter<'d, G, B, P, T> where
                 RoutingGraphNodeKind::SitePort(bel_idx) => (bel_idx, true, true),
                 RoutingGraphNodeKind::FreePort => unreachable!(),
             };
-            let stitt = self.bels.borrow()[bel_idx].site_type_idx;
 
-            let bel_name = {
-                let gsctx = GlobalStringsCtx::hold();
-
-                let bel_name = self.bels.borrow()[bel_idx].name.get(device, &gsctx);
-                let st_idx =
-                    self.tt.borrow().get_site_types().unwrap().get(stitt).get_primary_type();
-                let st = st_list.get(st_idx);
-                let st_name = device.ic_str(st.get_name()).unwrap();
-        
-                format!("{}_{}/{}", st_name, stitt, bel_name)
-            };
+            let bel_name: ResourceNameRef =
+                self.bels.borrow()[bel_idx].name.get(device, &gsctx);
     
             let bucket = bel_subgraphs.entry(bel_name)
                 .or_insert_with(|| BELSubGraph::default());
@@ -92,9 +79,7 @@ impl<'d, G, B, P, T> SiteRoutingGraphDotExporter<'d, G, B, P, T> where
     
         for (bel_name, bel_subgraph) in bel_subgraphs {
     
-            dot += &format!(
-                "    subgraph cluster_{} {{\n",
-                bel_name.replace('/', "__").replace('$', "S_"));
+            dot += &format!("    subgraph cluster_{} {{\n", bel_name.replace('$', "S_"));
             dot += &format!("        node [style=filled];\n");
             dot += &format!("        label = \"{}\";\n", bel_name);
             dot += &format!(

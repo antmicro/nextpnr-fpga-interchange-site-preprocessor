@@ -32,6 +32,7 @@ pub type Root<'a> = DeviceResources_capnp::device::Reader<'a>;
 //type RootBuilder<'a> = archdef::DeviceResources_capnp::device::Builder<'a>;
 pub type TileReader<'a> = DeviceResources_capnp::device::tile::Reader<'a>;
 pub type TileTypeReader<'a> = DeviceResources_capnp::device::tile_type::Reader<'a>;
+pub type SiteTypeReader<'a> = DeviceResources_capnp::device::site_type::Reader<'a>;
 /* type WiresReader<'a> = capnp::struct_list::Reader<
     'a, 
     crate::archdef::DeviceResources_capnp::device::wire::Owned

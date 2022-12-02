@@ -16,37 +16,69 @@
 
 use serde::{Serialize, Serializer, ser::SerializeStruct};
 use std::collections::HashMap;
-use std::borrow::Borrow;
+use crate::logic_formula::{DNFCube, FormulaTerm};
+use std::sync::Arc;
+
 use super::*;
 
 
-fn map_routing_map_to_serializable<'h, S>(
-    routing_map: &'h HashMap<(usize, usize), S>)
-    -> HashMap<String, &'h S>
-{
-    routing_map.iter()
-        .map(|(k, v)| (format!("{}->{}", k.0, k.1), v))
-        .collect()    
-}
-
-fn serialize_standard_routing_info_fields<S, P>(
-    ri: &site_brute_router::RoutingInfo<P>,
+fn serialize_standard_routing_info_fields<'r, 'd, A, P, S>(
+    ri: &RoutingInfoWithExtras<'d, A, P>,
     ser: &mut S,
 ) -> Result<(), S::Error>
 where
+    A: Default + Clone + std::fmt::Debug + 'static,
+    P: Serialize,
     S: serde::ser::SerializeStruct,
-    P: Serialize
 {
-    let serializable_map = map_routing_map_to_serializable(&ri.pin_to_pin_routing);
+    let serializable_map =
+        ri.map_routing_map_to_serializable(&ri.info.pin_to_pin_routing);
         
     ser.serialize_field("pin_to_pin_routing", &serializable_map)?;
-    ser.serialize_field("out_of_site_sources", &ri.out_of_site_sources)?;
-    ser.serialize_field("out_of_site_sinks", &ri.out_of_site_sinks)?;
+    ser.serialize_field("out_of_site_sources", &ri.info.out_of_site_sources)?;
+    ser.serialize_field("out_of_site_sinks", &ri.info.out_of_site_sinks)?;
 
     Ok(())
 }
 
-impl<P> Serialize for site_brute_router::RoutingInfo<P> where P: Serialize {
+pub struct RoutingInfoWithExtras<'d, A, P> where
+    A: Default + Clone + std::fmt::Debug + 'static,
+    P: Serialize
+{
+    device: &'d Device<'d>,
+    router: Arc<site_brute_router::BruteRouter<A>>,
+    info: site_brute_router::RoutingInfo<P>,
+    _a: std::marker::PhantomData<A>,
+}
+
+impl<'d, A, P> RoutingInfoWithExtras<'d, A, P> where
+    A: Default + Clone + std::fmt::Debug + 'static,
+    P: Serialize
+{
+    fn map_routing_map_to_serializable<'h, S>(
+        &self,
+        routing_map: &'h HashMap<(usize, usize), S>
+    )
+        -> HashMap<String, &'h S>
+    {
+        let gsctx = GlobalStringsCtx::hold();
+
+        routing_map.iter()
+            .map(|(k, v)| {
+                let from_name =
+                    self.router.get_pin_name(self.device, &gsctx, SitePinId(k.0));
+                let to_name =
+                    self.router.get_pin_name(self.device, &gsctx, SitePinId(k.1));
+                (format!("{}->{}", from_name.to_string(), to_name.to_string()), v)
+            })
+            .collect()    
+    }
+}
+
+impl<'r, 'd, A, P> Serialize for RoutingInfoWithExtras<'d, A, P> where
+    A: Default + Clone + std::fmt::Debug + 'static,
+    P: Serialize
+{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
         S: Serializer
     {
@@ -56,145 +88,102 @@ impl<P> Serialize for site_brute_router::RoutingInfo<P> where P: Serialize {
     }
 }
 
-fn serialize_standard_pin_pair_routing_info_fields<S, C>(
-    ppri: &site_brute_router::PinPairRoutingInfo<C>,
-    ser: &mut S,
-) -> Result<(), S::Error>
-where
-    S: serde::ser::SerializeStruct,
-    C: Ord + Eq + Serialize
+pub struct PinPairRoutingInfoWithExtras<'d, A> where 
+    A: Default + Clone + std::fmt::Debug
 {
-    ser.serialize_field("requires", &ppri.requires)?;
-    ser.serialize_field("implies", &ppri.implies)?;
-
-    Ok(())
+    device: &'d Device<'d>,
+    router: Arc<site_brute_router::BruteRouter<A>>,
+    ppri: site_brute_router::PinPairRoutingInfo<site_brute_router::ConstrainingElement>
 }
 
-#[derive(PartialOrd, PartialEq, Ord, Eq, Clone, Debug, Serialize, Deserialize)]
-pub enum ConstrainingElementWithDebugInfo {
-    Port {
-        id: u32,
-        name: String,
-    },
+#[derive(PartialOrd, Ord, PartialEq, Eq, Serialize)]
+pub enum StringConstrainingElement {
+    Port(String)
 }
 
-impl ConstrainingElementWithDebugInfo {
-    fn new<'d, R, A>(
-        og: site_brute_router::ConstrainingElement,
-        brouter: R,
-        device: &Device<'d>
+impl<'d, A> PinPairRoutingInfoWithExtras<'d, A> where
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    fn dnf_to_serializable(
+        &self,
+        form: &[DNFCube<site_brute_router::ConstrainingElement>]
     )
-        -> Self
-    where
-        R: Borrow<site_brute_router::BruteRouter<A>>,
-        A: Default + Clone + std::fmt::Debug + 'static
+        -> Vec<Vec<FormulaTerm<StringConstrainingElement>>>
     {
         use site_brute_router::ConstrainingElement::*;
-        match og {
-            Port(id) => {
-                let gsctx = GlobalStringsCtx::hold();
-                let name = brouter.borrow()
-                    .get_pin_name(device, &gsctx, TilePinId(id as usize))
-                    .to_string();
-                ConstrainingElementWithDebugInfo::Port { id, name }
-            }
-        }
-    }
-}
 
-pub struct PinPairRoutingInfoWithDebugInfo {
-    from: String,
-    to: String,
-    search_id: String,
-    ppri: site_brute_router::PinPairRoutingInfo<ConstrainingElementWithDebugInfo>
-}
-
-impl PinPairRoutingInfoWithDebugInfo {
-    pub fn from_ppri<'d, R, A>(
-        ppri: site_brute_router::PinPairRoutingInfo<ConstrainingElementWithDebugInfo>,
-        brouter: R,
-        from: TilePinId,
-        to: TilePinId,
-        device: &Device<'d>
-    ) -> Self
-    where
-        R: Borrow<site_brute_router::BruteRouter<A>>,
-        A: Default + Clone + std::fmt::Debug + 'static
-    {
         let gsctx = GlobalStringsCtx::hold();
-        let from = brouter.borrow().get_pin_name(device, &gsctx, from).to_string();
-        let to = brouter.borrow().get_pin_name(device, &gsctx, to).to_string();
-        Self {
-            search_id: format!("{}->{}", from, to),
-            from,
-            to,
-            ppri
-        }
+
+        form.iter().map(|cube| {
+            cube.terms.iter().map(|term| {
+                term.clone().map(|c| match c {
+                    Port(v) => StringConstrainingElement::Port(
+                        self.router.get_pin_name(self.device, &gsctx, SitePinId(v as usize))
+                            .to_string()
+                    )
+                })
+            }).collect()
+        }).collect()
     }
 }
 
-impl Serialize for PinPairRoutingInfoWithDebugInfo {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
+impl<'d, A> Serialize for PinPairRoutingInfoWithExtras<'d, A> where
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
         S: Serializer
     {
-        let mut s = serializer.serialize_struct("PinPairRoutingInfo", 6)?;
-        s.serialize_field("from", &self.from)?;
-        s.serialize_field("to", &self.to)?;
-        s.serialize_field("search_id", &self.search_id)?;
-        serialize_standard_pin_pair_routing_info_fields(&self.ppri, &mut s)?;
+        let mut s = serializer.serialize_struct("PinPairRoutingInfo", 2)?;
+        s.serialize_field("requires", &self.dnf_to_serializable(&self.ppri.requires))?;
+        s.serialize_field("implies", &self.dnf_to_serializable(&self.ppri.implies))?;
         s.end()
     }
 }
 
-pub trait RoutingInfoWithDebugInfo {
-    fn with_debug_info<'d, R, A>(self, brouter: R, device: &Device<'d>)
-        -> site_brute_router::RoutingInfo<PinPairRoutingInfoWithDebugInfo>
-    where
-        R: Borrow<site_brute_router::BruteRouter<A>>,
-        A: Default + Clone + std::fmt::Debug + 'static;
+pub trait IntoRoutingInfoWithExtras<'d, A>
+where
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    fn with_extras(
+        self,
+        router: Arc<site_brute_router::BruteRouter<A>>,
+        device: &'d Device<'d>
+    )
+        -> RoutingInfoWithExtras<'d, A, PinPairRoutingInfoWithExtras<'d, A>>;
 }
 
-impl RoutingInfoWithDebugInfo for 
+impl<'d, A> IntoRoutingInfoWithExtras<'d, A> for
     site_brute_router::RoutingInfo<
         site_brute_router::PinPairRoutingInfo<site_brute_router::ConstrainingElement>
     >
+where
+    A: Default + Clone + std::fmt::Debug + 'static
 {
-    fn with_debug_info<'d, R, A>(self, brouter: R, device: &Device<'d>)
-        -> site_brute_router::RoutingInfo<PinPairRoutingInfoWithDebugInfo>
-    where
-        R: Borrow<site_brute_router::BruteRouter<A>>,
-        A: Default + Clone + std::fmt::Debug + 'static
+    fn with_extras(
+        self,
+        router: Arc<site_brute_router::BruteRouter<A>>,
+        device: &'d Device<'d>
+    )
+        -> RoutingInfoWithExtras<'d, A, PinPairRoutingInfoWithExtras<'d, A>>
     {
-        site_brute_router::RoutingInfo {
-            pin_to_pin_routing: self.pin_to_pin_routing.into_iter()
-                .map(|((from, to), ppri)| {
-                    let ppri = site_brute_router::PinPairRoutingInfo {
-                        requires: ppri.requires.into_iter().map(|cube| {
-                            cube.map(|c_elem| {
-                                ConstrainingElementWithDebugInfo::new(
-                                    c_elem,
-                                    brouter.borrow(),
-                                    device
-                                )
-                            })
-                        }).collect(),
-                        implies: ppri.implies.into_iter().map(|cube| {
-                            cube.map(|c_elem| {
-                                ConstrainingElementWithDebugInfo::new(
-                                    c_elem,
-                                    brouter.borrow(),
-                                    device
-                                )
-                            })
-                        }).collect(),
-                    };
-                    ((from, to), PinPairRoutingInfoWithDebugInfo::from_ppri(
-                        ppri, brouter.borrow(), TilePinId(from), TilePinId(to), device)
-                    )
+        let router_ref = &router;
+        let ptpr: HashMap::<_, _> = self.pin_to_pin_routing.into_iter()
+            .map(move |(key, ppri)|
+                (key, PinPairRoutingInfoWithExtras {
+                    router: Arc::clone(router_ref),
+                    device,
+                    ppri
                 })
-                .collect(),
-            out_of_site_sinks: self.out_of_site_sinks,
-            out_of_site_sources: self.out_of_site_sources
-        }
+            ).collect();
+        RoutingInfoWithExtras {
+            device,
+            router: router,
+            info: site_brute_router::RoutingInfo {
+                pin_to_pin_routing: ptpr,
+                out_of_site_sources: self.out_of_site_sources,
+                out_of_site_sinks: self.out_of_site_sinks,
+            },
+            _a: Default::default() }
     }
 }
