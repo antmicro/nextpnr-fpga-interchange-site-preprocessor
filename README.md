@@ -62,10 +62,10 @@ nisp [OPTIONS] <DEVICE> <BBA> <COMMAND>
 Descriptions for currently available options are available when running the program with
 `--help` flag.
 
-If an option requires you to specify a list of tile type names, you can use `:all` as a
-replacement for listing all tiles in the architecture. To list select entries you can repeat
-the flag multiple times (eq. `--json CLEM --json CLEL`). Keep in mind that NISP won't create
-any prefix directories you specify on its own.
+If an option requires you to specify a list of site type names, you can use `:all` as a
+replacement for listing all site types in the architecture. To list select entries you can
+repeat the flag multiple times (eq. `--json CLEM --json CLEL`). Keep in mind that NISP won't
+create any prefix directories you specify on its own.
 
 ### `preprocess` subcommand
 
@@ -88,14 +88,11 @@ The JSON output is created by serializing internal structures of NISP. Its struc
 change over time. As such, I won't be documenting its structure in detail, instead I'm
 going to provide a general overview of the content of generated JSONs.
 
-Currently the JSON files which are outputted per-tile contain the following information:
+Currently the JSON files which are outputted per-site-type contain the following information:
 
-* Routable connections. Th top-level dictionary contains keys consisting of two numbers
-  joined by `->` symbol. Those two numbers are indices of BELs. The BELs are indexed in the
-  as a continuous array built by enumarating all bel pins in a tile type given the following
-  hierarchy: _tile type_ -> _site type_ -> _BEL_ -> _BEL pin_. This indexing is meant to 
-  mirror the way python-fpga-interchange writes BBAs which are used to generated binary blobs
-  for Nextpnr.
+* Routable connections. The top-level dictionary contains keys consisting of two strings
+  joined by `->` symbol. Those two strings identify BEL pins. The format of a BEL pin
+  identifier follows this pattern: `BEL_NAME.PIN_NAME`
 
 * Each routable connection has two lists associated with it.
   1. _requires_ list, which lists states which are required for given routing.
