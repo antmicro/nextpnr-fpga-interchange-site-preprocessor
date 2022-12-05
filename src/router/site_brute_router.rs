@@ -34,12 +34,12 @@ use crate::dot_exporter::SiteRoutingGraphDotExporter;
 use super::*;
 
 #[derive(Serialize)]
-pub struct PinPairRoutingInfo<C> where C: Ord + Eq {
-    pub requires: Vec<DNFCube<C>>,
-    pub implies: Vec<DNFCube<C>>,
+pub struct PinPairRoutingInfo {
+    pub requires: Vec<DNFCube<ConstrainingElement>>,
+    pub implies: Vec<DNFCube<ConstrainingElement>>,
 }
 
-impl PinPairRoutingInfo<ConstrainingElement> {
+impl PinPairRoutingInfo {
     /// A primitive heuristic for sorting constraints by number of terms.
     /// The idea is that a greedy algorithm would set value of the least
     /// constraints when placing a cell. Perhaps a better heuristic could
@@ -54,7 +54,7 @@ impl PinPairRoutingInfo<ConstrainingElement> {
     }
 }
 
-impl From<PTPRMarker> for PinPairRoutingInfo<ConstrainingElement> {
+impl From<PTPRMarker> for PinPairRoutingInfo {
     fn from(marker: PTPRMarker) -> Self {
         let mut me = Self {
             requires: marker.constraints.cubes,
@@ -65,10 +65,10 @@ impl From<PTPRMarker> for PinPairRoutingInfo<ConstrainingElement> {
     }
 }
 
-pub struct RoutingInfo<P> {
-    pub pin_to_pin_routing: HashMap<(usize, usize), P>,
-    pub out_of_site_sources: HashMap<usize, Vec<usize>>,
-    pub out_of_site_sinks: HashMap<usize, Vec<usize>>,
+pub struct RoutingInfo {
+    pub pin_to_pin_routing: HashMap<(SitePinId, SitePinId), PinPairRoutingInfo>,
+    pub out_of_site_sources: HashMap<SitePinId, Vec<SitePinId>>,
+    pub out_of_site_sinks: HashMap<SitePinId, Vec<SitePinId>>,
 }
 
 pub type RoutingGraphEdge = bool;
@@ -893,7 +893,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
         step_counter: Option<&mut usize>, /* Can be used only in debug build */
         optimize: bool
     )
-        -> impl Iterator<Item = PinPairRoutingInfo<ConstrainingElement>>
+        -> impl Iterator<Item = PinPairRoutingInfo>
     {
         let router = PortToPortRouter::<A>::new(&self.graph, from, &self.callback);
         router.route_all(step_counter)
@@ -907,8 +907,8 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
             .map(Into::into)
     }
 
-    fn route_range(&self, range: std::ops::Range<usize>, optimize: bool)
-        -> HashMap<(usize, usize), PinPairRoutingInfo<ConstrainingElement>>
+    fn route_range(&self, range: std::ops::Range<SitePinId>, optimize: bool)
+        -> HashMap<(SitePinId, SitePinId), PinPairRoutingInfo>
     {
         let mut pin_to_pin_map = HashMap::new();
         if range.is_empty() {
@@ -917,10 +917,11 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
 
         let pin_cnt = self.graph.nodes.len();
         debug_assert!(range.start < range.end);
-        debug_assert!(range.start <= pin_cnt);
+        debug_assert!(range.start.0 <= pin_cnt);
         debug_assert!(range.end <= range.end);
 
-        for from in range {
+        /* XXX: std::iter::Step is experiemntal, but required to iterate elegantly */
+        for from in range.start.0 .. range.end.0 {
             if let PinDir::Input = self.graph.get_node(from).dir {
                 continue; /* We don't need routing information for input pins */
             }
@@ -931,7 +932,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
             dbg_log!(DBG_EXTRA1, "  Number of steps: {}", step_counter);
             for (to, routing_info) in routing_results.enumerate() {
                 if (routing_info.requires.len() != 0) || (routing_info.implies.len() != 0) {
-                    pin_to_pin_map.insert((from, to), routing_info);
+                    pin_to_pin_map.insert((SitePinId(from), SitePinId(to)), routing_info);
                 }
             }
         }
@@ -940,22 +941,22 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
 
     fn gather_out_of_site_info(
         &self,
-        map: &HashMap<(usize, usize), PinPairRoutingInfo<ConstrainingElement>>
+        map: &HashMap<(SitePinId, SitePinId), PinPairRoutingInfo>
     )
-        -> (HashMap<usize, Vec<usize>>, HashMap<usize, Vec<usize>>)
+        -> (HashMap<SitePinId, Vec<SitePinId>>, HashMap<SitePinId, Vec<SitePinId>>)
     {
         let mut out_of_site_sources = HashMap::new();
         let mut out_of_site_sinks = HashMap::new();
 
         for ((from, to), _) in map {
-            let from_node = self.graph.get_node(*from);
+            let from_node = self.graph.get_node(from.0);
             if let PinDir::Output | PinDir::Inout = from_node.dir {
                 if let RoutingGraphNodeKind::SitePort(_) = from_node.kind {
                     out_of_site_sources.entry(*to).or_insert_with(Vec::new).push(*from);
                 }
             }
 
-            let to_node = self.graph.get_node(*to);
+            let to_node = self.graph.get_node(to.0);
             if let PinDir::Input | PinDir::Inout = to_node.dir {
                 if let RoutingGraphNodeKind::SitePort(_) = to_node.kind {
                     out_of_site_sinks.entry(*from).or_insert_with(Vec::new).push(*to);
@@ -966,11 +967,9 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
         (out_of_site_sources, out_of_site_sinks)
     }
 
-    pub fn route_all(&self, optimize: bool)
-        -> RoutingInfo<PinPairRoutingInfo<ConstrainingElement>>
-    {
+    pub fn route_all(&self, optimize: bool) -> RoutingInfo {
         let map = self.route_range(
-            0 .. self.site_belpin_idx_to_bel_pin.len(),
+            SitePinId(0) .. SitePinId(self.graph.node_count()),
             optimize
         );
 
@@ -1000,8 +999,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
 }
 
 pub trait MultiThreadedBruteRouter<A> {
-    fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
-        -> RoutingInfo<PinPairRoutingInfo<ConstrainingElement>>;
+    fn route_all_multithreaded(self, thread_count: usize, optimize: bool) -> RoutingInfo;
 }
 
 impl<R, A> MultiThreadedBruteRouter<A> for R
@@ -1010,8 +1008,7 @@ where
     A: Default + Clone + std::fmt::Debug + 'static
 {
     /* Not the best multithreading, but should improve the runtime nevertheless. */
-    fn route_all_multithreaded(self, thread_count: usize, optimize: bool)
-        -> RoutingInfo<PinPairRoutingInfo<ConstrainingElement>>
+    fn route_all_multithreaded(self, thread_count: usize, optimize: bool) -> RoutingInfo
     {
         let mut total_map = HashMap::new();
         let mut handles = Vec::new();
@@ -1021,7 +1018,10 @@ where
         for range in split_range_nicely(0 .. pin_cnt, thread_count) {
             let me = self.clone();
             let handle = thread::spawn(move || {
-                me.borrow().route_range(range, optimize)
+                me.borrow().route_range(
+                    SitePinId(range.start) .. SitePinId(range.end),
+                    optimize
+                )
             });
             handles.push(handle);
         }

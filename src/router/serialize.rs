@@ -14,7 +14,7 @@
  */
 
 
-use serde::{Serialize, Serializer, ser::SerializeStruct};
+use serde::{Serialize, Serializer, ser::{SerializeStruct, SerializeMap, SerializeSeq}};
 use std::collections::HashMap;
 use crate::logic_formula::{DNFCube, FormulaTerm};
 use std::sync::Arc;
@@ -22,62 +22,26 @@ use std::sync::Arc;
 use super::*;
 
 
-fn serialize_standard_routing_info_fields<'r, 'd, A, P, S>(
-    ri: &RoutingInfoWithExtras<'d, A, P>,
+fn serialize_standard_routing_info_fields<'r, 'd, A, S>(
+    ri: &RoutingInfoWithExtras<'d, A>,
     ser: &mut S,
 ) -> Result<(), S::Error>
 where
     A: Default + Clone + std::fmt::Debug + 'static,
-    P: Serialize,
     S: serde::ser::SerializeStruct,
 {
     let serializable_map =
-        ri.map_routing_map_to_serializable(&ri.info.pin_to_pin_routing);
+        ri.map_routing_map_to_serializable(&ri.pin_to_pin_routing);
         
     ser.serialize_field("pin_to_pin_routing", &serializable_map)?;
-    ser.serialize_field("out_of_site_sources", &ri.info.out_of_site_sources)?;
-    ser.serialize_field("out_of_site_sinks", &ri.info.out_of_site_sinks)?;
+    ser.serialize_field("out_of_site_sources", &ri.out_of_site_sources)?;
+    ser.serialize_field("out_of_site_sinks", &ri.out_of_site_sinks)?;
 
     Ok(())
 }
 
-pub struct RoutingInfoWithExtras<'d, A, P> where
-    A: Default + Clone + std::fmt::Debug + 'static,
-    P: Serialize
-{
-    device: &'d Device<'d>,
-    router: Arc<site_brute_router::BruteRouter<A>>,
-    info: site_brute_router::RoutingInfo<P>,
-    _a: std::marker::PhantomData<A>,
-}
-
-impl<'d, A, P> RoutingInfoWithExtras<'d, A, P> where
-    A: Default + Clone + std::fmt::Debug + 'static,
-    P: Serialize
-{
-    fn map_routing_map_to_serializable<'h, S>(
-        &self,
-        routing_map: &'h HashMap<(usize, usize), S>
-    )
-        -> HashMap<String, &'h S>
-    {
-        let gsctx = GlobalStringsCtx::hold();
-
-        routing_map.iter()
-            .map(|(k, v)| {
-                let from_name =
-                    self.router.get_pin_name(self.device, &gsctx, SitePinId(k.0));
-                let to_name =
-                    self.router.get_pin_name(self.device, &gsctx, SitePinId(k.1));
-                (format!("{}->{}", from_name.to_string(), to_name.to_string()), v)
-            })
-            .collect()    
-    }
-}
-
-impl<'r, 'd, A, P> Serialize for RoutingInfoWithExtras<'d, A, P> where
-    A: Default + Clone + std::fmt::Debug + 'static,
-    P: Serialize
+impl<'r, 'd, A> Serialize for RoutingInfoWithExtras<'d, A> where
+    A: Default + Clone + std::fmt::Debug + 'static
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
         S: Serializer
@@ -93,7 +57,7 @@ pub struct PinPairRoutingInfoWithExtras<'d, A> where
 {
     device: &'d Device<'d>,
     router: Arc<site_brute_router::BruteRouter<A>>,
-    ppri: site_brute_router::PinPairRoutingInfo<site_brute_router::ConstrainingElement>
+    ppri: site_brute_router::PinPairRoutingInfo
 }
 
 #[derive(PartialOrd, Ord, PartialEq, Eq, Serialize)]
@@ -141,23 +105,117 @@ impl<'d, A> Serialize for PinPairRoutingInfoWithExtras<'d, A> where
     }
 }
 
-pub trait IntoRoutingInfoWithExtras<'d, A>
-where
+pub struct SitePinHashMap<'d, A, T> where
     A: Default + Clone + std::fmt::Debug + 'static
 {
-    fn with_extras(
-        self,
-        router: Arc<site_brute_router::BruteRouter<A>>,
-        device: &'d Device<'d>
-    )
-        -> RoutingInfoWithExtras<'d, A, PinPairRoutingInfoWithExtras<'d, A>>;
+    router: Arc<site_brute_router::BruteRouter<A>>,
+    device: &'d Device<'d>,
+    hashmap: HashMap<SitePinId, T>,
 }
 
-impl<'d, A> IntoRoutingInfoWithExtras<'d, A> for
-    site_brute_router::RoutingInfo<
-        site_brute_router::PinPairRoutingInfo<site_brute_router::ConstrainingElement>
-    >
-where
+impl<'d, A, T> Serialize for SitePinHashMap<'d, A, T> where
+    T: Serialize,
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer
+    {
+        let gsctx = GlobalStringsCtx::hold();
+        let mut s = serializer.serialize_map(Some(self.hashmap.len()))?;
+        for (key, value) in &self.hashmap {
+            s.serialize_entry(
+                &self.router.get_pin_name(self.device, &gsctx, *key).to_string(),
+                value
+            )?;
+        }
+        s.end()
+    }
+}
+
+pub struct SitePinVec<'d, A> where
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    router: Arc<site_brute_router::BruteRouter<A>>,
+    device: &'d Device<'d>,
+    vec: Vec<SitePinId>,
+}
+
+impl<'d, A> Serialize for SitePinVec<'d, A> where
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where
+        S: Serializer
+    {
+        let gsctx = GlobalStringsCtx::hold();
+        let mut s = serializer.serialize_seq(Some(self.vec.len()))?;
+        for pin in &self.vec {
+            s.serialize_element(
+                &self.router.get_pin_name(self.device, &gsctx, *pin).to_string()
+            )?;
+        }
+        s.end()
+    }
+}
+
+pub struct RoutingInfoWithExtras<'d, A> where
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    router: Arc<site_brute_router::BruteRouter<A>>,
+    device: &'d Device<'d>,
+    pub pin_to_pin_routing:
+        HashMap<(SitePinId, SitePinId), PinPairRoutingInfoWithExtras<'d, A>>,
+    pub out_of_site_sources: SitePinHashMap<'d, A, SitePinVec<'d, A>>,
+    pub out_of_site_sinks: SitePinHashMap<'d, A, SitePinVec<'d, A>>,
+}
+
+impl<'d, A> RoutingInfoWithExtras<'d, A> where
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    fn map_routing_map_to_serializable<'h, S>(
+        &self,
+        routing_map: &'h HashMap<(SitePinId, SitePinId), S>
+    )
+        -> HashMap<String, &'h S>
+    {
+        let gsctx = GlobalStringsCtx::hold();
+
+        routing_map.iter()
+            .map(|((from, to), v)| {
+                let from_name =
+                    self.router.get_pin_name(self.device, &gsctx, *from);
+                let to_name =
+                    self.router.get_pin_name(self.device, &gsctx, *to);
+                (format!("{}->{}", from_name.to_string(), to_name.to_string()), v)
+            })
+            .collect()    
+    }
+
+    fn convert_hashmap(
+        router: Arc<site_brute_router::BruteRouter<A>>,
+        device: &'d Device<'d>,
+        hm: HashMap<SitePinId, Vec<SitePinId>>
+    )
+        -> SitePinHashMap<'d, A, SitePinVec<'d, A>>
+    {
+        let router_c = Arc::clone(&router);
+        SitePinHashMap {
+            router,
+            device,
+            hashmap: hm.into_iter().map(|(k, v)| {
+                let vec = SitePinVec {
+                    router: Arc::clone(&router_c),
+                    device,
+                    vec: v
+                };
+
+                (k, vec)
+            }).collect()
+        }
+    }
+}
+
+pub trait IntoRoutingInfoWithExtras<'d, A> where
     A: Default + Clone + std::fmt::Debug + 'static
 {
     fn with_extras(
@@ -165,7 +223,18 @@ where
         router: Arc<site_brute_router::BruteRouter<A>>,
         device: &'d Device<'d>
     )
-        -> RoutingInfoWithExtras<'d, A, PinPairRoutingInfoWithExtras<'d, A>>
+        -> RoutingInfoWithExtras<'d, A>;
+}
+
+impl<'d, A> IntoRoutingInfoWithExtras<'d, A> for site_brute_router::RoutingInfo where
+    A: Default + Clone + std::fmt::Debug + 'static
+{
+    fn with_extras(
+        self,
+        router: Arc<site_brute_router::BruteRouter<A>>,
+        device: &'d Device<'d>
+    )
+        -> RoutingInfoWithExtras<'d, A>
     {
         let router_ref = &router;
         let ptpr: HashMap::<_, _> = self.pin_to_pin_routing.into_iter()
@@ -176,14 +245,21 @@ where
                     ppri
                 })
             ).collect();
+        
         RoutingInfoWithExtras {
+            router: Arc::clone(&router),
             device,
-            router: router,
-            info: site_brute_router::RoutingInfo {
-                pin_to_pin_routing: ptpr,
-                out_of_site_sources: self.out_of_site_sources,
-                out_of_site_sinks: self.out_of_site_sinks,
-            },
-            _a: Default::default() }
+            pin_to_pin_routing: ptpr,
+            out_of_site_sources: RoutingInfoWithExtras::convert_hashmap(
+                Arc::clone(&router),
+                device,
+                self.out_of_site_sources
+            ),
+            out_of_site_sinks: RoutingInfoWithExtras::convert_hashmap(
+                Arc::clone(&router),
+                device,
+                self.out_of_site_sinks
+            ),
+        }
     }
 }

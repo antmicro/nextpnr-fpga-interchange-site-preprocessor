@@ -358,7 +358,7 @@ pub struct FullRoutingInfo<I> where I: serde::Serialize {
 }
 
 /// Uniquely identifies a site pin within a given site type.
-#[derive(Copy, Clone, Serialize, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Serialize, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SitePinId(usize);
 
 /// Holds various name components of a site pin within a site type.
