@@ -378,7 +378,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
 
     fn init_constraints_and_activators(&mut self, node: usize) {
         self.markers[node].constraints = DNFForm::new()
-            .add_cube(DNFCube { terms: vec![FormulaTerm::True] });
+            .add_cube(DNFCube::new());
         self.markers[node].activated = DNFForm::new()
             .add_cube(DNFCube::new());
     }
@@ -921,6 +921,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
             dbg_log!(DBG_EXTRA1, "Routing from pin {}/{}", from, pin_cnt);
             let routing_results = self.route_pins(SitePinId(from), optimize);
             for (to, routing_info) in routing_results.enumerate() {
+                if to == from { continue; }
                 if (routing_info.requires.len() != 0) || (routing_info.implies.len() != 0) {
                     pin_to_pin_map.insert((SitePinId(from), SitePinId(to)), routing_info);
                 }
