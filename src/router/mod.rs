@@ -19,6 +19,7 @@ use std::marker::PhantomData;
 
 use crate::common::IcStr;
 use crate::ic_loader::archdef::Root as Device;
+#[allow(unused)]
 use crate::log::*;
 use crate::strings::*;
 use crate::ic_loader::{DeviceResources_capnp, LogicalNetlist_capnp};

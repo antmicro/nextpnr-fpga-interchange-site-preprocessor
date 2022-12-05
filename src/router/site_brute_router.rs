@@ -383,10 +383,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
             .add_cube(DNFCube::new());
     }
 
-    fn route_all(mut self, mut step_counter: Option<&mut usize>) -> Vec<PTPRMarker> {
-        #[cfg(debug_assertions)]
-        if let Some(ref mut counter) = step_counter { **counter = 0 };
-
+    fn route_all(mut self) -> Vec<PTPRMarker> {
         self.init_constraints_and_activators(self.from.0);
 
         self.queue.clear();
@@ -400,9 +397,6 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
             accumulator: Default::default(),
         });
         loop {
-            #[cfg(debug_assertions)]
-            if let Some(ref mut counter) = step_counter { **counter += 1 };
-
             if let None = self.routing_step() { return self.markers; }
         }
     }
@@ -890,13 +884,12 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
     pub fn route_pins(
         &self,
         from: SitePinId,
-        step_counter: Option<&mut usize>, /* Can be used only in debug build */
         optimize: bool
     )
         -> impl Iterator<Item = PinPairRoutingInfo>
     {
         let router = PortToPortRouter::<A>::new(&self.graph, from, &self.callback);
-        router.route_all(step_counter)
+        router.route_all()
             .into_iter()
             .map(move |mut marker| {
                 if optimize {
@@ -926,10 +919,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
                 continue; /* We don't need routing information for input pins */
             }
             dbg_log!(DBG_EXTRA1, "Routing from pin {}/{}", from, pin_cnt);
-            let mut step_counter = 0;
-            let routing_results =
-                self.route_pins(SitePinId(from), Some(&mut step_counter), optimize);
-            dbg_log!(DBG_EXTRA1, "  Number of steps: {}", step_counter);
+            let routing_results = self.route_pins(SitePinId(from), optimize);
             for (to, routing_info) in routing_results.enumerate() {
                 if (routing_info.requires.len() != 0) || (routing_info.implies.len() != 0) {
                     pin_to_pin_map.insert((SitePinId(from), SitePinId(to)), routing_info);

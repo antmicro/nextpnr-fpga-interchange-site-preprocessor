@@ -240,7 +240,7 @@ fn route_pair<'d>(args: RoutePairCmd, device: ic_loader::archdef::Root<'d>) {
         (None, None, acc)
     });
 
-    let _ = brouter.route_pins(from, None, false).enumerate();
+    let _ = brouter.route_pins(from, false);
 
     let gsctx = GlobalStringsCtx::hold();
     println!("Explored the following routes:");
