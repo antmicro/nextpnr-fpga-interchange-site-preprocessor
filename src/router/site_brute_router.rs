@@ -913,7 +913,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
         debug_assert!(range.start.0 <= pin_cnt);
         debug_assert!(range.end <= range.end);
 
-        /* XXX: std::iter::Step is experiemntal, but required to iterate elegantly */
+        /* XXX: std::iter::Step is experimental, but required to iterate elegantly */
         for from in range.start.0 .. range.end.0 {
             if let PinDir::Input = self.graph.get_node(from).dir {
                 continue; /* We don't need routing information for input pins */
