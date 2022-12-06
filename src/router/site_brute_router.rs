@@ -289,8 +289,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
          * but Cow has the dumbest ToOwned implmentation (blanket implmentation) */
         let new_requirements = match frame.prev_node {
             Some(prev) => self.markers[prev.0].constraints.clone(),
-            None => DNFForm::new()
-                .add_cube(DNFCube { terms: vec![FormulaTerm::True] }),
+            None => DNFForm::new().add_cube(DNFCube::new()),
         };
         let new_requirements =
             self.scan_constraint_requirements(frame.node, frame.prev_node)
