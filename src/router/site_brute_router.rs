@@ -258,8 +258,8 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
 
     fn is_activators_subformular(&self, a: Option<SitePinId>, b: SitePinId) -> bool {
         if let Some(SitePinId(a)) = a {
-            let my_form = &self.markers[a].constraints;
-            let other_form = &self.markers[b.0].constraints;
+            let my_form = &self.markers[a].activated;
+            let other_form = &self.markers[b.0].activated;
             my_form.is_subformula_of(other_form)
         } else {
             true
@@ -309,7 +309,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
 
         let new_activators = match frame.prev_node {
             Some(prev) => self.markers[prev.0].activated.clone(),
-            None => DNFForm::new(),
+            None => DNFForm::new().add_cube(DNFCube::new()),
         };
         let new_activators =
             self.scan_constraint_activators(frame.node, frame.prev_node)
