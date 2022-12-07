@@ -739,16 +739,22 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
 
             let net_name = gsctx.get_global_string(from_bel_name).to_string();
             let pip_bel_name =
-                create_vconst_net_pipbel_name(src_bel_name, net_name, &mut gsctx);
+                create_vconst_net_pipbel_name(src_bel_name, &net_name, &mut gsctx);
             
             let pip_bel_idx = bel_name_to_bel_idx[&pip_bel_name];
 
             let pip_bel_input_pin_idx = bels[pip_bel_idx]
                 .find_pin(ResourceName::DeviceResources(src.get_bel()))
-                .expect("Can't find PIP BEL pin for const source BEL");
+                .unwrap_or_else(|| panic!(
+                    "Can't find PIP BEL pin for const source BEL `{}`",
+                    device.ic_str(src.get_bel())
+                ));
             let pip_bel_output_pin_idx = bels[pip_bel_idx]
-                .find_pin(ResourceName::DeviceResources(src_wire.get_name()))
-                .expect("Can't find PIP BEL pin for const source wire");
+                .find_pin(create_vconst_net_wire_name(net_name, &mut gsctx))
+                .unwrap_or_else(|| panic!(
+                    "Can't find PIP BEL pin for const source wire `{}`",
+                    device.ic_str(src_wire.get_name())
+                ));
             
             let pip_bel_input_belpin =
                 tile_belpin_idx[&(pip_bel_idx, pip_bel_input_pin_idx)];

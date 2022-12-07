@@ -240,6 +240,19 @@ where
     ))
 }
 
+fn create_vconst_net_wire_name<N>(
+    net_name: N,
+    gsctx: &mut GlobalStringsCtx
+)
+    -> ResourceName
+where
+    N: std::fmt::Display
+{
+    ResourceName::Virtual(gsctx.create_global_string(
+        format!("{}_SITE_WIRE", net_name)
+    ))
+}
+
 fn create_belname_pinname_to_wire_lookup<'d>(
     st: &DeviceResources_capnp::device::site_type::Reader<'d>
 )
@@ -282,11 +295,6 @@ fn gather_bels_in_site_type<'a>(
         use crate::ic_loader::DeviceResources_capnp::device::ConstantType;
 
         let site_sources = device.get_constants().unwrap().get_site_sources().unwrap();
-
-        let sw_list = st.get_site_wires().unwrap();
-        
-        /* For some reason everything in constants is referenced by names */
-        let bel_pin_to_wire = create_belname_pinname_to_wire_lookup(&st);
         
         let mut gsctx = GlobalStringsCtx::hold();
 
@@ -295,10 +303,6 @@ fn gather_bels_in_site_type<'a>(
                 site_source.get_site_type() == st.get_name()
             })
             .fold((false, false), |(vcc_added, gnd_added), site_source| {
-                let wire_id = bel_pin_to_wire[&(
-                    site_source.get_bel(),
-                    site_source.get_bel_pin()
-                )];
                 let bel_name = device.ic_str(site_source.get_bel());
 
                 let (acc, net_name) = match site_source.get_constant().unwrap() {
@@ -322,9 +326,7 @@ fn gather_bels_in_site_type<'a>(
                 bels.push(create_pip_bel(
                     create_vconst_net_pipbel_name(bel_name, net_name, &mut gsctx),
                     ResourceName::DeviceResources(site_source.get_bel()),
-                    ResourceName::DeviceResources(
-                        sw_list.get(wire_id).get_name()
-                    )
+                    create_vconst_net_wire_name(net_name, &mut gsctx)
                 ));
                 
                 acc
