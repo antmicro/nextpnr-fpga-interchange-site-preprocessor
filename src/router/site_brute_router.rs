@@ -218,6 +218,7 @@ struct PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug + 'sta
     markers: Vec<PTPRMarker>,
     queue: VecDeque<PortToPortRouterFrame<A>>,
     callback: &'g Option<BruteRouterCallback<A>>,
+    optimize_implies: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -230,7 +231,8 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
     fn new(
         graph: &'g RoutingGraph,
         from: SitePinId,
-        callback: &'g Option<BruteRouterCallback<A>>
+        callback: &'g Option<BruteRouterCallback<A>>,
+        optimize_implies: bool
     ) -> Self {
         Self {
             graph,
@@ -243,6 +245,7 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
             }).collect(),
             queue: VecDeque::new(),
             callback,
+            optimize_implies,
         }
     }
 
@@ -297,9 +300,9 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
         
         add_creq_cb.as_mut().map(|cb| cb(new_requirements.clone()));
         
-        let is_subformular = self.is_constr_subformular(frame.prev_node, frame.node);
+        let needs_alternative = !self.is_constr_subformular(frame.prev_node, frame.node);
         replace_with_or_abort(&mut self.markers[frame.node.0].constraints, |c| {
-            if !is_subformular {
+            if needs_alternative {
                 c.disjunct(new_requirements)
             } else {
                 new_requirements
@@ -316,9 +319,13 @@ impl<'g, A> PortToPortRouter<'g, A> where A: Default + Clone + std::fmt::Debug +
 
         add_cact_cb.as_mut().map(|cb| cb(new_activators.clone()));
 
-        let is_subformular = self.is_activators_subformular(frame.prev_node, frame.node);
+        let needs_alternative = if self.optimize_implies {
+            !self.is_activators_subformular(frame.prev_node, frame.node)
+        } else {
+            needs_alternative
+        };
         replace_with_or_abort(&mut self.markers[frame.node.0].activated, |c| {
-            if !is_subformular {
+            if needs_alternative {
                 c.disjunct(new_activators)
             } else {
                 new_activators
@@ -893,7 +900,7 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
     )
         -> impl Iterator<Item = PinPairRoutingInfo>
     {
-        let router = PortToPortRouter::<A>::new(&self.graph, from, &self.callback);
+        let router = PortToPortRouter::<A>::new(&self.graph, from, &self.callback, optimize);
         router.route_all()
             .into_iter()
             .map(move |mut marker| {
