@@ -967,6 +967,25 @@ impl<A> BruteRouter<A> where A: Default + Clone + std::fmt::Debug + 'static {
             }
         }
 
+        /* Sort routings. */
+
+        let heuristic = |from: SitePinId, to: SitePinId| {
+            let routing_info = &map[&(from, to)];
+            assert!(routing_info.requires.len() >= 1);
+            /* The idea is that we want to pick a connecion that is not very constraining, but
+             * we also want later sinks to allow more routability options, as reaching them
+             * would mean that the site is more constrained */
+            routing_info.requires[0].len().pow(2) * routing_info.requires.len()
+        };
+
+        for (dst, sources) in out_of_site_sources.iter_mut() {
+            sources.sort_by_key(|src| heuristic(*src, *dst));
+        }
+
+        for (src, sinks) in out_of_site_sinks.iter_mut() {
+            sinks.sort_by_key(|dst| heuristic(*src, *dst));
+        }
+
         (out_of_site_sources, out_of_site_sinks)
     }
 
